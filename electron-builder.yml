@@ -1,0 +1,40 @@
+appId: dev.dbide.app
+productName: DBIDE
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asar: true
+# Hardening applied to the packaged Electron binary.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Real signing and notarization are wired in M5, which also turns the hardened runtime on.
+  # Until then builds get an ad-hoc signature, which Apple Silicon needs to run a binary at all
+  # (the fuse changes invalidate the original). The hardened runtime would additionally need a
+  # library-validation entitlement with an ad-hoc signature, so it stays off for now.
+  hardenedRuntime: false
+  identity: '-'
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+linux:
+  category: Development
+  target:
+    - AppImage
+    - deb
+    - rpm

@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output: the app (out/), packaged installers (release/), and compiler leftovers
+out/
+dist/
+release/
+coverage/
+*.tsbuildinfo
+
+# Caches and files the smoke tests write
+.vitest/
+.eslintcache
+.shots/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Secrets: environment files, and keys and certificates that should never be committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Editors, tools and the operating system
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+.claude/settings.local.json

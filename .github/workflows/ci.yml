@@ -1,0 +1,259 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+
+      # Boots the real app on each OS and checks that renderer, core, storage and the
+      # secret store can talk to each other. Linux needs a virtual display.
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke:shots
+      - name: Smoke test
+        if: runner.os != 'Linux'
+        run: pnpm smoke:shots
+
+      # The RabbitMQ screens against an in-memory stand-in for its management API, so every OS runs them
+      # without a broker installed.
+      - name: Smoke test, RabbitMQ screens (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm smoke:rabbitmq
+      - name: Smoke test, RabbitMQ screens
+        if: runner.os != 'Linux'
+        run: pnpm smoke:rabbitmq
+
+      # The Redis screens against an in-memory stand-in that speaks the protocol, so every OS runs them
+      # without a server installed.
+      - name: Smoke test, Redis screens (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm smoke:redis
+      - name: Smoke test, Redis screens
+        if: runner.os != 'Linux'
+        run: pnpm smoke:redis
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: .shots
+          if-no-files-found: ignore
+
+  # The MySQL driver against real servers. GitHub only offers service containers on Linux.
+  mysql:
+    name: MySQL driver (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['mysql:5.5', 'mysql:5.6', 'mysql:5.7', 'mysql:8.0', 'mysql:8.4', 'mariadb:11']
+    services:
+      db:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: dbide
+          MARIADB_ROOT_PASSWORD: dbide
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized || mysqladmin ping -h 127.0.0.1 -pdbide"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/core/drivers/mysql/mysql.integration.test.ts
+        env:
+          DBIDE_TEST_MYSQL_URL: mysql://root:dbide@127.0.0.1:3306
+
+      # The real app against the same server: tree, runs, types, cancel, a 300,000-row result,
+      # editing, foreign keys, and export, with the files read back from disk.
+      - name: Live smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke:live
+        env:
+          DBIDE_TEST_MYSQL_URL: mysql://root:dbide@127.0.0.1:3306
+
+  # The MongoDB driver against real servers, from the oldest the driver supports to the newest.
+  mongodb:
+    name: MongoDB driver (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['mongo:4.4', 'mongo:7.0', 'mongo:8.0']
+    services:
+      db:
+        image: ${{ matrix.image }}
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongosh --quiet --eval 'db.runCommand({ping:1})' || mongo --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/core/drivers/mongodb/mongodb.integration.test.ts
+        env:
+          DBIDE_TEST_MONGO_URL: mongodb://127.0.0.1:27017
+
+      # The real app against the same server: tree, queries, the table and tree views, the inspector,
+      # editing and saving documents, cancel, and the locks.
+      - name: Live smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke:mongo
+        env:
+          DBIDE_TEST_MONGO_URL: mongodb://127.0.0.1:27017
+
+  # The RabbitMQ driver against real brokers, through their management API.
+  rabbitmq:
+    name: RabbitMQ driver (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['rabbitmq:3.13-management', 'rabbitmq:4-management']
+    services:
+      broker:
+        image: ${{ matrix.image }}
+        ports:
+          - 5672:5672
+          - 15672:15672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s
+          --health-timeout=10s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/core/drivers/rabbitmq/rabbitmq.integration.test.ts
+        env:
+          DBIDE_TEST_RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672
+          DBIDE_TEST_RABBITMQ_MANAGEMENT_PORT: '15672'
+
+      # The real app against the same broker: tree, vhost, queue and exchange tabs, peeking, publishing,
+      # purging, creating and deleting, bindings, and the locks.
+      - name: Live smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke:rabbitmq
+        env:
+          DBIDE_TEST_RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672
+          DBIDE_TEST_RABBITMQ_MANAGEMENT_PORT: '15672'
+
+  # The Redis driver against real servers: Redis 5 (which has no COPY, SET KEEPTTL or SCAN TYPE), Redis 7 and Valkey.
+  redis:
+    name: Redis driver (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['redis:5', 'redis:7', 'valkey/valkey:8']
+    services:
+      server:
+        image: ${{ matrix.image }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="valkey-cli ping || redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/core/drivers/redis/redis.integration.test.ts
+        env:
+          DBIDE_TEST_REDIS_URL: redis://127.0.0.1:6379
+
+      # The real app against the same server: the tree, the key browser, every kind of key, TTLs, bulk delete,
+      # the console, the server tab and the locks.
+      - name: Live smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke:redis
+        env:
+          DBIDE_TEST_REDIS_URL: redis://127.0.0.1:6379
+
+  # A login with an ACL user, TLS, a cluster and a Sentinel, which service containers can't express.
+  redis-setups:
+    name: Redis driver (login, TLS, cluster, Sentinel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start the servers
+        run: scripts/redis-test-servers.sh up | grep '^export ' | sed 's/^export //' >> "$GITHUB_ENV"
+      - run: pnpm exec vitest run src/core/drivers/redis/redis.integration.test.ts
+        env:
+          DBIDE_TEST_REDIS_URL: redis://127.0.0.1:6390
+      - name: Stop the servers
+        if: always()
+        run: scripts/redis-test-servers.sh down

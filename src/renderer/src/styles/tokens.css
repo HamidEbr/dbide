@@ -1,0 +1,126 @@
+/*
+ * Design tokens. A theme is just this file: change the values and the whole app follows.
+ * Dark mode comes from `prefers-color-scheme`, which the main process drives through
+ * nativeTheme.themeSource (system / light / dark), so one media query covers all three.
+ * The title-bar overlay colors in shared/settings.ts must match --bg-1.
+ */
+:root {
+  color-scheme: light dark;
+
+  --font-ui: 'Inter Variable', 'Vazirmatn Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'Vazirmatn Variable', ui-monospace, monospace;
+  --fs-ui: 13px;
+  --fs-small: 12px;
+  --fs-mono: 12.5px;
+  --fs-title: 18px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --dur-fast: 100ms;
+  --dur: 150ms;
+
+  --titlebar-h: 38px;
+  --statusbar-h: 24px;
+  --row-h: 28px;
+
+  /* Surfaces */
+  --bg-0: #ffffff;
+  --bg-1: #f4f4f6;
+  --bg-2: #ebebef;
+  --bg-3: #dedee4;
+  --bg-overlay: rgba(20, 21, 26, 0.35);
+
+  /* Text */
+  --fg-0: #1b1c20;
+  --fg-1: #4a4b55;
+  --fg-2: #6b6c78;
+
+  --line: rgba(27, 28, 32, 0.1);
+  --line-strong: rgba(27, 28, 32, 0.2);
+
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+
+  /* Meaning. Red, amber and green are reserved for status and environments. */
+  --danger: #d92d3a;
+  --danger-soft: rgba(217, 45, 58, 0.1);
+  --warn: #b7791f;
+  --warn-soft: rgba(183, 121, 31, 0.12);
+  --ok: #2f855a;
+  --ok-soft: rgba(47, 133, 90, 0.12);
+
+  --env-local: #8b8c96;
+  --env-dev: #2f9e63;
+  --env-staging: #d98a0b;
+  --env-prod: #dc3545;
+
+  --shadow-popover: 0 12px 32px rgba(20, 21, 26, 0.18), 0 2px 8px rgba(20, 21, 26, 0.1);
+
+  /* SQL syntax. Each one clears 4.5:1 on --bg-0. */
+  --syn-keyword: #7c3aed;
+  --syn-string: #15803d;
+  --syn-number: #b45309;
+  --syn-comment: #6b7280;
+  --syn-type: #0369a1;
+  --syn-function: #be185d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-0: #16171a;
+    --bg-1: #1b1c20;
+    --bg-2: #25262c;
+    --bg-3: #30313a;
+    --bg-overlay: rgba(0, 0, 0, 0.55);
+
+    --fg-0: #e8e8ec;
+    --fg-1: #b4b5bf;
+    --fg-2: #8f90a0;
+
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.18);
+
+    --accent: #6b9bff;
+    --accent-fg: #0b1020;
+    --accent-soft: rgba(107, 155, 255, 0.16);
+
+    --danger: #f0616d;
+    --danger-soft: rgba(240, 97, 109, 0.14);
+    --warn: #e0a64a;
+    --warn-soft: rgba(224, 166, 74, 0.14);
+    --ok: #5fc08a;
+    --ok-soft: rgba(95, 192, 138, 0.14);
+
+    --env-local: #8f90a0;
+    --env-dev: #4cc383;
+    --env-staging: #f0a53a;
+    --env-prod: #f0616d;
+
+    --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+
+    --syn-keyword: #c4a7ff;
+    --syn-string: #86e0a6;
+    --syn-number: #f2b66d;
+    --syn-comment: #8f90a0;
+    --syn-type: #7cc4ff;
+    --syn-function: #f59ac6;
+  }
+}
+
+:root[data-density='compact'] {
+  --row-h: 24px;
+}
+
+:root[data-density='comfortable'] {
+  --row-h: 32px;
+}
