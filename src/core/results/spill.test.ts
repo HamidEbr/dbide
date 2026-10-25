@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -134,11 +134,19 @@ describe('SpillStore', () => {
   })
 
   it('starts empty even if an earlier run left files behind, and removes them when closed', () => {
-    store.append(owner('a'), 0, numbers(0, 3))
-    const again = new SpillStore(store.dir)
+    // What a core that did not shut down cleanly leaves: its database and anything else in the folder.
+    // Its process is gone, so nothing holds them open (Windows can't delete a file that is still open).
+    const dir = join(root, 'left-behind')
+    const earlier = new SpillStore(dir)
+    earlier.append(owner('a'), 0, numbers(0, 3))
+    ;(earlier as unknown as { db: { close(): void } }).db.close()
+    writeFileSync(join(dir, 'stray'), 'x')
+
+    const again = new SpillStore(dir)
     expect(again.count('a')).toBe(0)
+    expect(existsSync(join(dir, 'stray'))).toBe(false)
     again.close()
-    expect(existsSync(store.dir)).toBe(false)
+    expect(existsSync(dir)).toBe(false)
   })
 
   it('reads a range that starts and ends inside different pieces', () => {
