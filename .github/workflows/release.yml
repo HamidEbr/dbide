@@ -1,0 +1,93 @@
+name: Release
+
+# Push a tag such as v0.1.0 and this builds the installers for macOS and Windows, then puts them in a
+# draft GitHub release for you to look at and publish. Running it by hand (Actions > Release > Run workflow)
+# builds the installers and keeps them as downloadable artifacts, without making a release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            builder: --mac
+          - name: Windows
+            os: windows-latest
+            builder: --win
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # A tag that does not match package.json would ship installers that say another version.
+      - name: The tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::The tag is $TAG but package.json says version $version. Change one so they agree, and tag again."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      # The unit tests, so a build that breaks on one OS is caught before it is published.
+      - run: pnpm test
+
+      - run: pnpm build
+
+      # electron-builder only builds here; the release job below publishes what it made.
+      - run: pnpm exec electron-builder ${{ matrix.builder }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Draft the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: installers
+
+      - name: What is being published
+        run: ls -lh installers
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: installers/*
+          draft: true
+          generate_release_notes: true
+          # 0.x is not a stable release yet.
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}

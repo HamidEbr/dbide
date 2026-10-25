@@ -309,6 +309,44 @@ for reading), and permissions on the vhost. The connection test checks that addr
   was just done. Tabs refresh themselves every 5 seconds while they are on screen.
 - A vhost lists up to 5,000 queues; the tree shows the first 1,000 of a group and says how many more there are.
 
+## Making a release
+
+Installers for macOS and Windows are built by GitHub Actions ([`release.yml`](.github/workflows/release.yml)), so
+neither needs its own machine.
+
+1. Set the version in `package.json` (for example `0.1.0`), commit and push it.
+2. Tag that commit with a `v` and the same number, and push the tag:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+3. Open the repository's **Actions** tab and watch **Release**. It runs the unit tests and builds on a Mac and on
+   Windows, which takes roughly 10 to 15 minutes. A tag that doesn't match `package.json` stops the build with a
+   message saying so.
+4. When it finishes, **Releases** has a **draft** with the installers attached and notes generated from the commits.
+   Read the notes, then press **Publish release**.
+
+What is built: for the Mac, `DBIDE-<version>-mac-arm64.dmg` and `-mac-x64.dmg` (Apple Silicon and Intel), each with a
+`.zip` beside it; for Windows, a setup `.exe` for x64 and ARM64 PCs (electron-builder names it, and GitHub turns the spaces
+in the name into dots). Running **Actions > Release > Run workflow** by hand builds them without a tag and keeps them as
+downloads of that run, which is the way to try the workflow before the first real release. `pnpm dist` builds the
+installers for the machine you are on (into `release/`). The Mac installers were built and smoke-tested on a Mac; the
+Windows side has not run yet, so the first manual run is also its first test.
+
+**The installers are not signed yet**, so the first launch shows a warning, and a user has to say yes once:
+
+- **macOS** says the app can't be checked for malicious software. Open **System Settings > Privacy & Security** and press
+  **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/DBIDE.app` once.
+- **Windows** SmartScreen says it protected the PC. Press **More info**, then **Run anyway**.
+
+Removing the warnings takes certificates that cost money: an Apple Developer ID with notarization (about 99 US dollars a
+year; the build then needs `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` as
+repository secrets, and `hardenedRuntime` and `identity` changed in `electron-builder.yml`), and a Windows code-signing
+certificate or Azure Trusted Signing. The app has no icon of its own either: put `icon.icns`, `icon.ico` and `icon.png`
+in a `build/` folder and electron-builder picks them up.
+
 ## How it is put together
 
 ```
