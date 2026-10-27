@@ -1,6 +1,8 @@
 import type { ColumnInfo } from '@shared/driver'
 import { classifyStatement } from '@shared/sql'
+import { coreLink } from '@/ipc/link'
 import { useDialogs } from '@/state/dialogs'
+import { notify } from '@/state/notices'
 import { useScripts, type ResultSet, type StatementRun } from '@/state/scripts'
 
 /** Why a result can't be exported yet, or null when it can. */
@@ -35,4 +37,27 @@ export function openExport(scriptId: string, statement: StatementRun, resultSet:
     sql: statement.sql,
     columns: resultSet.columns,
   })
+}
+
+/**
+ * Opens the export dialog for a whole table or view, from the tree. The columns come from the server, so the
+ * dialog can offer them, and the SELECT is built from what is chosen there.
+ */
+export async function openTableExport(
+  connectionId: string,
+  schema: string,
+  table: string,
+): Promise<void> {
+  try {
+    const description = await coreLink.call('tables.describe', { connectionId, schema, table })
+    useDialogs.getState().openExport({
+      connectionId,
+      database: schema,
+      sql: '',
+      columns: [],
+      table: { schema, table, columns: description.columns.map((c) => c.name) },
+    })
+  } catch (error) {
+    notify(error instanceof Error ? error.message : String(error), 'error')
+  }
 }

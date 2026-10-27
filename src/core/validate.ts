@@ -397,6 +397,8 @@ export interface ExportParams {
   sql: string
   format: ExportFormat
   options: ExportOptions
+  /** Write the file gzipped. An Excel file is a zip already, so it is never compressed again. */
+  compress: boolean
   fileName: string
 }
 
@@ -455,6 +457,7 @@ export function validateExportParams(input: unknown): ExportParams {
     sql: sql as string,
     format: format as ExportFormat,
     options: validateExportOptions(input.options),
+    compress: input.compress === true && format !== 'xlsx',
     fileName: fileName as string,
   }
 }

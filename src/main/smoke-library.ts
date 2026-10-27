@@ -384,6 +384,46 @@ export const EXPORT_1 = wrap(`
     check('cancelling stops the export and says nothing was written', notice(/Nothing was written/))
     document.querySelector('.dialog-export').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await waitFor(() => !document.querySelector('.dialog-export'), 'the dialog to close')
+
+    // A whole table, from the tree
+    const BT = String.fromCharCode(96)
+    const roots = await call('tree.children', { connectionId: 'sql-dev', parent: null })
+    const shop = roots.find((n) => n.label === 'shop')
+    const groups = await call('tree.children', { connectionId: 'sql-dev', parent: shop })
+    const tables = groups.find((g) => /tables/i.test(g.label))
+    ui.useTree.getState().expand('sql-dev', null)
+    await sleep(150)
+    ui.useTree.getState().expand('sql-dev', shop)
+    await sleep(150)
+    ui.useTree.getState().expand('sql-dev', tables)
+    const exportOrders = await waitFor(() => document.querySelector('[aria-label="Export orders to a file"]'), 'the Export button on the orders table')
+    check('a table in the tree offers Export', true)
+    const viewRows = all('.tree-row').filter((r) => /open_orders/.test(r.textContent))
+    exportOrders.click()
+    await waitFor(() => document.querySelector('.dialog-export .export-columns'), 'the table export dialog')
+    check('the dialog is about the table, and shows the SELECT it will run', /Export orders/.test(document.querySelector('#export-title').textContent) && document.querySelector('.dialog-export .export-sql').textContent.includes('FROM ' + BT + 'shop' + BT + '.' + BT + 'orders' + BT + ''), document.querySelector('.dialog-export .export-sql').textContent)
+    const columnChecks = () => all('.dialog-export .export-columns .check')
+    check('it lists the table’s columns, all ticked', columnChecks().length === 7 && columnChecks().every((c) => c.querySelector('input').checked), columnChecks().length)
+    byText('.dialog-export .export-columns .check', 'note').querySelector('input').click()
+    await waitFor(() => !document.querySelector('.dialog-export .export-sql').textContent.includes('SELECT *'), 'the SELECT to name its columns')
+    check('leaving a column out names the others', !document.querySelector('.dialog-export .export-sql').textContent.includes('' + BT + 'note' + BT + '') && document.querySelector('.dialog-export .export-sql').textContent.includes('' + BT + 'customer' + BT + ''))
+    const limitInput = [...document.querySelectorAll('.dialog-export input.mono')].find((i) => i.placeholder === 'all')
+    setValue(limitInput, '5')
+    const whereInput = [...document.querySelectorAll('.dialog-export .export-grid input.mono')].find((i) => i.placeholder !== 'all' && i.placeholder !== '(empty)')
+    setValue(whereInput, "customer = 'x'")
+    await waitFor(() => /LIMIT 5/.test(document.querySelector('.dialog-export .export-sql').textContent), 'the LIMIT')
+    check('a condition and a limit go into the SELECT', document.querySelector('.dialog-export .export-sql').textContent.includes('WHERE (' + NL + 'customer = ' + String.fromCharCode(39) + 'x' + String.fromCharCode(39) + NL + ')') && /LIMIT 5/.test(document.querySelector('.dialog-export .export-sql').textContent))
+    byText('.dialog-export .check', 'Compress with gzip').querySelector('input').click()
+    byText('.dialog-export footer button', 'Export').click()
+    await waitFor(() => document.querySelector('.export-done'), 'the table export to finish', 30000)
+    check('the export writes the 5 rows to a .gz file', document.querySelector('.export-done').textContent.includes('5 rows') && /[.]csv[.]gz$/.test(document.querySelector('.export-path').textContent), document.querySelector('.export-done').textContent)
+    out.gzPath = document.querySelector('.export-path').textContent
+    byText('.export-done button', 'Done').click()
+    await waitFor(() => !document.querySelector('.dialog-export'), 'the dialog to close')
+    await call('export.run', { exportId: 'bad-table', connectionId: 'sql-dev', database: 'shop', sql: 'SELECT * FROM ' + BT + 'shop' + BT + '.' + BT + 'orders' + BT + NL + 'WHERE (' + NL + '1=1); DROP TABLE orders; --' + NL + ')', format: 'csv', options: { header: true, delimiter: ',', nullText: '', quoteAll: false, bom: false, crlf: false, neutralizeFormulas: false, tableName: 't', rowsPerInsert: 100 }, fileName: 'never.csv' }).then(
+      () => check('a condition that adds a second statement is refused', false),
+      (error) => check('a condition that adds a second statement is refused', error.code === 'INVALID_INPUT' || error.code === 'NOT_A_QUERY', error.code),
+    )
 `)
 
 /** A result with 300 columns: only the ones on screen are drawn, and the rest are one key away. */

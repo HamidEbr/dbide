@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ColumnInfo, ResultBatch } from '@shared/driver'
 import { DEFAULT_EXPORT_OPTIONS } from '@shared/export'
@@ -304,5 +305,72 @@ describe('fileSink', () => {
     for (let i = 0; i < 5000; i++) await sink.write(line)
     await sink.finish()
     expect(readFileSync(path).length).toBe(5000 * 1024)
+  })
+
+  describe('compressed', () => {
+    it('writes a gzip file that reads back as the text that was written', async () => {
+      const path = join(dir, 'out.csv.gz')
+      const sink = fileSink(path, { gzip: true })
+      await sink.ready()
+      await sink.write('id,name\n')
+      await sink.write('1,café\n')
+      await sink.finish()
+      expect(gunzipSync(readFileSync(path)).toString('utf8')).toBe('id,name\n1,café\n')
+      expect(await readdir(dir)).toEqual(['out.csv.gz'])
+    })
+
+    it('makes a big, repetitive export much smaller, with back-pressure', async () => {
+      const path = join(dir, 'big.txt.gz')
+      const sink = fileSink(path, { gzip: true })
+      const line = 'x'.repeat(1023) + '\n'
+      for (let i = 0; i < 5000; i++) await sink.write(line)
+      await sink.finish()
+      expect(readFileSync(path).length).toBeLessThan(50_000)
+      expect(gunzipSync(readFileSync(path)).length).toBe(5000 * 1024)
+    })
+
+    it('writes bytes as well as text, as an Excel file would', async () => {
+      const path = join(dir, 'bytes.gz')
+      const sink = fileSink(path, { gzip: true })
+      await sink.write(Uint8Array.from([1, 2, 3]))
+      await sink.finish()
+      expect([...gunzipSync(readFileSync(path))]).toEqual([1, 2, 3])
+    })
+
+    it('leaves nothing behind when it is stopped', async () => {
+      const path = join(dir, 'stopped.csv.gz')
+      const sink = fileSink(path, { gzip: true })
+      await sink.ready()
+      await sink.write('some text')
+      await sink.abort()
+      expect(await readdir(dir)).toEqual([])
+    })
+
+    it('reports a folder that does not exist before anything is written', async () => {
+      const sink = fileSink(join(dir, 'missing', 'out.gz'), { gzip: true })
+      await expect(sink.ready()).rejects.toMatchObject({ code: 'ENOENT' })
+      await sink.abort()
+      expect(await readdir(dir)).toEqual([])
+    })
+
+    it('exports a query into it', async () => {
+      const path = join(dir, 'query.json.gz')
+      const sink = fileSink(path, { gzip: true })
+      const result = await exportQuery({
+        session: sessionOf([
+          { kind: 'columns', columns },
+          { kind: 'rows', rows: [[1, 'a']] },
+        ]),
+        sql: 'SELECT * FROM t',
+        database: null,
+        format: 'json',
+        options: DEFAULT_EXPORT_OPTIONS,
+        sink,
+        signal: new AbortController().signal,
+      })
+      await sink.finish()
+      expect(result.rows).toBe(1)
+      expect(JSON.parse(gunzipSync(readFileSync(path)).toString())).toEqual([{ id: 1, name: 'a' }])
+    })
   })
 })

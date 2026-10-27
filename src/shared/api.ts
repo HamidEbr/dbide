@@ -353,6 +353,8 @@ export interface CoreApi {
       sql: string
       format: ExportFormat
       options: ExportOptions
+      /** Write the file gzipped (ignored for Excel, which is a zip already). */
+      compress?: boolean
       /** Suggested name in the save dialog. */
       fileName: string
     }

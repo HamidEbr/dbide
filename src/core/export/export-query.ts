@@ -1,5 +1,7 @@
 import { createWriteStream } from 'node:fs'
 import { rename, unlink } from 'node:fs/promises'
+import type { Writable } from 'node:stream'
+import { createGzip } from 'node:zlib'
 import type { DriverSession } from '@shared/driver'
 import type { ExportFormat, ExportOptions } from '@shared/export'
 import type { Cell } from '@shared/query'
@@ -18,20 +20,27 @@ export interface ExportSink {
   abort(): Promise<void>
 }
 
-export function fileSink(path: string): ExportSink {
+export function fileSink(path: string, options: { gzip?: boolean } = {}): ExportSink {
   const partial = `${path}.part`
-  const stream = createWriteStream(partial, { encoding: 'utf8' })
+  const file = createWriteStream(partial)
+  // With compression the text goes through gzip on its way to the file; either way `stream` is what is written to.
+  const stream: Writable = options.gzip ? createGzip() : file
   let failure: Error | null = null
-  stream.on('error', (error) => {
+  const fail = (error: Error): void => {
     failure = error
-  })
+  }
+  file.on('error', fail)
+  if (options.gzip) {
+    stream.on('error', fail)
+    stream.pipe(file)
+  }
 
   return {
     ready: () =>
       new Promise<void>((resolve, reject) => {
         if (failure) return reject(failure)
-        stream.once('open', () => resolve())
-        stream.once('error', reject)
+        file.once('open', () => resolve())
+        file.once('error', reject)
       }),
 
     write(chunk) {
@@ -52,10 +61,12 @@ export function fileSink(path: string): ExportSink {
     },
 
     async finish() {
+      // The file is complete once everything, compressed or not, has been handed to the disk.
       await new Promise<void>((resolve, reject) => {
         if (failure) return reject(failure)
-        stream.once('error', reject)
-        stream.end(() => resolve())
+        file.once('error', reject)
+        file.once('finish', () => resolve())
+        stream.end()
       })
       if (failure) throw failure
       await rename(partial, path)
@@ -63,10 +74,11 @@ export function fileSink(path: string): ExportSink {
 
     async abort() {
       // Wait until the file is closed, or a file still being opened would appear after the delete.
-      if (!stream.closed) {
+      if (!file.closed) {
         await new Promise<void>((resolve) => {
-          stream.once('close', () => resolve())
+          file.once('close', () => resolve())
           stream.destroy()
+          file.destroy()
         })
       }
       await unlink(partial).catch(() => undefined)

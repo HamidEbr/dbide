@@ -3170,3 +3170,25 @@ li[data-status='skipped'] .step-title span:first-child {
   border-radius: 4px;
   background: var(--accent);
 }
+
+/* Exporting a whole table: which columns, and the condition and limit. */
+.export-columns-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+}
+.export-columns-head > span {
+  flex: 1;
+  color: var(--fg-1);
+}
+.export-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 2px var(--space-3);
+  max-height: 130px;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: auto;
+}

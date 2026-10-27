@@ -3,11 +3,17 @@ import type { ColumnInfo } from '@shared/driver'
 
 /** What the export dialog needs to know about the result it was opened for. */
 export interface ExportRequest {
-  scriptId: string
+  /** The script whose result is exported. Missing for a table exported from the tree. */
+  scriptId?: string
   connectionId: string
   database: string | null
   sql: string
   columns: ColumnInfo[]
+  /**
+   * Set when a whole table is exported from the tree: the dialog builds the SELECT itself, from the columns,
+   * the condition and the limit chosen in it.
+   */
+  table?: { schema: string; table: string; columns: string[] }
 }
 
 interface DialogsState {

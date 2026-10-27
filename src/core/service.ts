@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import type { DatabaseSync } from 'node:sqlite'
 import { CoreEvents, type CoreApi } from '@shared/api'
 import {
@@ -920,9 +921,9 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       const { config, secrets: saved } = await loadConnection(params.connectionId)
       const format = exportFormat(params.format)
       const path = await files.chooseSavePath({
-        defaultName: params.fileName,
-        filterName: format.filter,
-        extension: format.extension,
+        defaultName: params.compress ? `${params.fileName}.gz` : params.fileName,
+        filterName: params.compress ? `${format.filter}, gzipped` : format.filter,
+        extension: params.compress ? 'gz' : format.extension,
       })
       ctx.signal.throwIfAborted()
       if (path === null) return { status: 'dismissed' }
@@ -935,7 +936,7 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
         readOnly: true,
         signal: ctx.signal,
       })
-      const sink = fileSink(path)
+      const sink = fileSink(path, { gzip: params.compress })
       try {
         const { rows, bytes } = await exportQuery({
           session,
@@ -954,7 +955,8 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           status: 'saved',
           path,
           rows,
-          bytes,
+          // A compressed file is smaller than the text that went into it; the size shown is the file's.
+          bytes: params.compress ? (await stat(path)).size : bytes,
           durationMs: Math.round(performance.now() - startedAt),
         }
       } catch (error) {

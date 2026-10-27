@@ -13,7 +13,8 @@ The product plan, competitor research and roadmap live in [PLAN.md](PLAN.md). Th
 editor, the streamed result grid (wide and million-row results included), the **value viewer and record
 view**, **staged row editing** with a commit shortcut, **generated UPDATE and DELETE statements**, **jumping
 along foreign keys**, **scripts as files with local history**, **query history**, and **export** to CSV, TSV,
-JSON, JSON Lines, SQL, Markdown and Excel. It works with **MySQL 5.5.3 and newer** and with MariaDB, and is
+JSON, JSON Lines, SQL, Markdown and Excel, from a result or from a **table or view in the tree** (choose the
+columns, a condition and a row limit; optionally gzip the file). It works with **MySQL 5.5.3 and newer** and with MariaDB, and is
 verified against the demo engine and against real servers (**MySQL 5.5, 5.6, 5.7, 8.0 and 8.4, and MariaDB
 11.8**; see _Testing the MySQL driver_).
 **M3 (MongoDB)** has its first full pass: connect (plain, `mongodb+srv`, replica sets, login, TLS with a

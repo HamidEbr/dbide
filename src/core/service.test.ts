@@ -1,5 +1,6 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { gunzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_EXPORT_OPTIONS } from '@shared/export'
@@ -1014,6 +1015,33 @@ describe('export', () => {
       CoreEvents.exportProgress,
       { exportId: 'e1', rows: 3, bytes: 8 },
     ])
+  })
+
+  it('writes a gzip file when asked, and says so in the save dialog', async () => {
+    const path = join(out, 'orders.csv.gz')
+    const t = exportSetup(path)
+    await save(t)
+    const result = await t.handlers['export.run'](
+      params('SELECT n FROM t', { compress: true }),
+      ctx,
+    )
+    expect(result).toMatchObject({ status: 'saved', path, rows: 3 })
+    expect(gunzipSync(readFileSync(path)).toString()).toBe('n\n1\n2\n3\n')
+    expect(t.files.saveAsked).toEqual(['orders-2026-03-01.csv.gz'])
+    // The size reported is the file's, not the text's.
+    expect((result as { bytes: number }).bytes).toBe(readFileSync(path).length)
+  })
+
+  it('does not compress an Excel file, which is a zip already', async () => {
+    const path = join(out, 'orders.xlsx')
+    const t = exportSetup(path)
+    await save(t)
+    await t.handlers['export.run'](
+      params('SELECT n FROM t', { format: 'xlsx', compress: true, fileName: 'orders.xlsx' }),
+      ctx,
+    )
+    expect(t.files.saveAsked).toEqual(['orders.xlsx'])
+    expect(readFileSync(path).subarray(0, 2).toString()).toBe('PK')
   })
 
   it('does nothing when the save dialog is dismissed', async () => {

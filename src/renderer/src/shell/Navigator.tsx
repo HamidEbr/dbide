@@ -7,6 +7,7 @@ import {
   Clock,
   Columns3,
   Database,
+  Download,
   Eye,
   FileCode,
   Folder,
@@ -36,6 +37,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { prefixGlob } from '@shared/redis/types'
 import { DENSITY_ROW_HEIGHT } from '@shared/settings'
 import { EngineIcon, EnvDot, IconButton, Kbd } from '@/components/ui'
+import { openTableExport } from '@/features/sql/export/open'
 import { createScript, findAllMongo, selectAllSql } from '@/features/sql/scripts'
 import { useData } from '@/state/data'
 import { useTree } from '@/state/tree'
@@ -312,6 +314,16 @@ export function Navigator() {
                 onNewScript={() => newScript(row)}
                 onBrowse={() => browse(row)}
                 onConsole={() => openConsole(row)}
+                canExport={
+                  row.type === 'node' &&
+                  (row.node.kind === 'table' || row.node.kind === 'view') &&
+                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                }
+                onExport={() => {
+                  if (row.type === 'node' && row.node.scope) {
+                    void openTableExport(row.connectionId, row.node.scope, row.node.label)
+                  }
+                }}
               />
             ))}
           </div>
@@ -330,6 +342,9 @@ interface RowProps {
   onNewScript: () => void
   onBrowse: () => void
   onConsole: () => void
+  /** A table or view of a SQL server, which can be written to a file from here. */
+  canExport: boolean
+  onExport: () => void
 }
 
 function TreeRowView({
@@ -341,6 +356,8 @@ function TreeRowView({
   onNewScript,
   onBrowse,
   onConsole,
+  canExport,
+  onExport,
 }: RowProps) {
   const indent = 8 + row.depth * INDENT
 
@@ -513,6 +530,17 @@ function TreeRowView({
       ) : node.kind === 'database' ||
         (OPENS_DATA.has(node.kind) && !BROKER_KINDS.has(node.kind)) ? (
         <span className="tree-actions">
+          {canExport ? (
+            <IconButton
+              label={`Export ${node.label} to a file`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onExport()
+              }}
+            >
+              <Download size={12} />
+            </IconButton>
+          ) : null}
           <IconButton
             label={`New script in ${node.scope ?? node.label}`}
             onClick={(event) => {
