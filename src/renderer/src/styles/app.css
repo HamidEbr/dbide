@@ -1874,6 +1874,25 @@ li[data-status='skipped'] .step-title span:first-child {
 .sql-connection {
   max-width: 180px;
 }
+.schema-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+button.schema-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.schema-status-failed {
+  color: var(--warn);
+}
 
 /* Larger dialogs: local history and export */
 .dialog-icon.neutral {

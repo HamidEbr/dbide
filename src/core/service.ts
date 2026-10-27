@@ -613,6 +613,34 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       }
     },
 
+    'schema.columns': async (input, ctx) => {
+      const { connectionId, database, tables } = (input ?? {}) as {
+        connectionId?: unknown
+        database?: unknown
+        tables?: unknown
+      }
+      if (
+        typeof connectionId !== 'string' ||
+        typeof database !== 'string' ||
+        !connectionId ||
+        !database ||
+        !Array.isArray(tables) ||
+        tables.length === 0 ||
+        tables.length > 200 ||
+        !tables.every((t) => typeof t === 'string' && t.length > 0 && t.length <= 256)
+      ) {
+        throw new RpcError('INVALID_INPUT', 'Name a connection, a database and up to 200 tables.')
+      }
+      const { session } = await connectionSession(connectionId, ctx)
+      if (!session.tableColumns) return { tables: [], foreignKeys: [] }
+      try {
+        return await session.tableColumns(database, tables as string[], ctx.signal)
+      } catch (error) {
+        await dropIfDead(connectionKey(connectionId), error)
+        throw error
+      }
+    },
+
     'schema.fields': async (input, ctx) => {
       const { connectionId, database, collection } = validateSampleFields(input)
       const { session } = await connectionSession(connectionId, ctx)

@@ -2,6 +2,7 @@ import { createConnection, escapeId, type Connection, type ConnectionOptions } f
 import type {
   SchemaDetail,
   SchemaTable,
+  TableColumns,
   DriverSession,
   ExecuteRequest,
   ResultBatch,
@@ -122,25 +123,50 @@ export class MysqlSession implements DriverSession {
 
   async schemaDetail(database: string, signal: AbortSignal): Promise<SchemaDetail> {
     signal.throwIfAborted()
-    const tableRows = await this.query(
-      `SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES
+    // Only the names and kinds: asking for more makes an older server open every table, which on a database
+    // with thousands is slow. Columns are read for the few tables a statement names.
+    const rows = await this.query(
+      `SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`,
       [database],
+    )
+    return {
+      database,
+      tables: rows.map(([name, type]) => ({
+        name: String(name),
+        view: String(type).toUpperCase().includes('VIEW'),
+        comment: '',
+        columns: [],
+      })),
+      foreignKeys: [],
+    }
+  }
+
+  async tableColumns(
+    database: string,
+    names: string[],
+    signal: AbortSignal,
+  ): Promise<TableColumns> {
+    signal.throwIfAborted()
+    const tableRows = await this.query(
+      `SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?)`,
+      [database, names],
     )
     signal.throwIfAborted()
     const columnRows = await this.query(
       `SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
          FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION`,
-      [database],
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?) ORDER BY TABLE_NAME, ORDINAL_POSITION`,
+      [database, names],
     )
     signal.throwIfAborted()
     const keyRows = await this.query(
       `SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
          FROM information_schema.KEY_COLUMN_USAGE
-        WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?) AND REFERENCED_TABLE_NAME IS NOT NULL
         ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`,
-      [database],
+      [database, names],
     )
     const tables = new Map<string, SchemaTable>()
     for (const [name, type, comment] of tableRows) {
@@ -161,7 +187,6 @@ export class MysqlSession implements DriverSession {
       })
     }
     return {
-      database,
       tables: [...tables.values()],
       foreignKeys: keyRows.map(([table, column, refSchema, refTable, refColumn]) => ({
         table: String(table),

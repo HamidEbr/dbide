@@ -542,11 +542,23 @@ describe.skipIf(!parsed)('MySQL driver (live server)', () => {
       expect(names).toContain('information_schema')
     })
 
-    it('reads the tables, views, columns and foreign keys of a database', async () => {
+    it('lists the tables and views of a database by name, without their columns', async () => {
       const detail = await session.schemaDetail!(schema, new AbortController().signal)
       expect(detail.database).toBe(schema)
+      expect(detail.tables.map((t) => t.name)).toEqual(
+        expect.arrayContaining(['items', 'nums', 'orders']),
+      )
+      expect(detail.tables.every((t) => t.columns.length === 0 && !t.view)).toBe(true)
+    })
+
+    it('reads the columns, keys and foreign keys of just the tables asked for', async () => {
+      const detail = await session.tableColumns!(
+        schema,
+        ['items', 'orders'],
+        new AbortController().signal,
+      )
+      expect(detail.tables.map((t) => t.name).sort()).toEqual(['items', 'orders'])
       const items = detail.tables.find((t) => t.name === 'items')!
-      expect(items).toMatchObject({ view: false })
       expect(items.columns.map((c) => c.name)).toEqual([
         'id',
         'name',
@@ -560,27 +572,36 @@ describe.skipIf(!parsed)('MySQL driver (live server)', () => {
       expect(items.columns[0]).toMatchObject({ key: 'PRI', nullable: false })
       expect(items.columns[1]).toMatchObject({ type: 'varchar(100)', nullable: false, key: 'MUL' })
       expect(items.columns[2]).toMatchObject({ type: 'decimal(10,2)', nullable: true })
-      expect(detail.foreignKeys).toContainEqual({
-        table: 'orders',
-        column: 'item_id',
-        refSchema: schema,
-        refTable: 'items',
-        refColumn: 'id',
-      })
+      expect(detail.foreignKeys).toEqual([
+        {
+          table: 'orders',
+          column: 'item_id',
+          refSchema: schema,
+          refTable: 'items',
+          refColumn: 'id',
+        },
+      ])
     })
 
-    it('sees a view, and a table made after the first read once it asks again', async () => {
+    it('names a table that does not exist by leaving it out', async () => {
+      const detail = await session.tableColumns!(
+        schema,
+        ['items', 'ghost'],
+        new AbortController().signal,
+      )
+      expect(detail.tables.map((t) => t.name)).toEqual(['items'])
+    })
+
+    it('sees a view, and reads its columns', async () => {
       await collect(
         session,
         'CREATE VIEW cheap AS SELECT id, name FROM items WHERE price < 1',
         schema,
       )
-      const detail = await session.schemaDetail!(schema, new AbortController().signal)
-      expect(detail.tables.find((t) => t.name === 'cheap')).toMatchObject({ view: true })
-      expect(detail.tables.find((t) => t.name === 'cheap')!.columns.map((c) => c.name)).toEqual([
-        'id',
-        'name',
-      ])
+      const listed = await session.schemaDetail!(schema, new AbortController().signal)
+      expect(listed.tables.find((t) => t.name === 'cheap')).toMatchObject({ view: true })
+      const detail = await session.tableColumns!(schema, ['cheap'], new AbortController().signal)
+      expect(detail.tables[0]!.columns.map((c) => c.name)).toEqual(['id', 'name'])
       await collect(session, 'DROP VIEW cheap', schema)
     })
 

@@ -65,10 +65,21 @@ export interface SchemaForeignKey {
   refColumn: string
 }
 
-/** What autocomplete knows about one database: its tables and views with their columns, and how they join. */
+/**
+ * What autocomplete knows about one database: its tables and views. The columns and foreign keys are read per
+ * table, when a statement needs them, because reading every column of a big database takes a long time.
+ */
 export interface SchemaDetail {
   database: string
+  /** Tables and views by name; `columns` is empty here and comes from `tableColumns`. */
   tables: SchemaTable[]
+  foreignKeys: SchemaForeignKey[]
+}
+
+/** The columns, comments and foreign keys of some tables of one database. */
+export interface TableColumns {
+  tables: SchemaTable[]
+  /** Foreign keys of these tables, each pointing at another table. */
   foreignKeys: SchemaForeignKey[]
 }
 
@@ -130,8 +141,10 @@ export interface DriverSession {
   execute(request: ExecuteRequest, signal: AbortSignal): AsyncIterable<ResultBatch>
   /** Table and column names for autocomplete. */
   completionSchema?(database: string | null, signal: AbortSignal): Promise<Record<string, string[]>>
-  /** Every table, view and column of one database, with types and keys, for autocomplete. */
+  /** The tables and views of one database, for autocomplete. Quick even for a database with thousands. */
   schemaDetail?(database: string, signal: AbortSignal): Promise<SchemaDetail>
+  /** Columns with types and keys, comments, and foreign keys, of just the named tables, for autocomplete. */
+  tableColumns?(database: string, tables: string[], signal: AbortSignal): Promise<TableColumns>
   /** The names of the databases this login can see, for autocomplete after `USE` and `db.`. */
   databaseNames?(signal: AbortSignal): Promise<string[]>
   /** Primary key and column details of one table, for editing rows. */

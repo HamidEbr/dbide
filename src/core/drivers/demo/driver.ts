@@ -14,6 +14,7 @@ import type {
   ResultBatch,
   SchemaDetail,
   SchemaTable,
+  TableColumns,
   SessionInfo,
   TreeNode,
 } from '@shared/driver'
@@ -223,8 +224,7 @@ class DemoSession implements DriverSession {
     return Promise.resolve(['analytics', 'information_schema', 'mysql', 'shop'])
   }
 
-  schemaDetail(database: string): Promise<SchemaDetail> {
-    if (database !== 'shop') return Promise.resolve({ database, tables: [], foreignKeys: [] })
+  private demoTables(): SchemaTable[] {
     const columns = (list: ColumnInfo[]): SchemaTable['columns'] =>
       list.map((c) => ({
         name: c.name,
@@ -233,42 +233,52 @@ class DemoSession implements DriverSession {
         key: c.name === 'id' ? 'PRI' : '',
         comment: '',
       }))
+    return [
+      {
+        name: 'customers',
+        view: false,
+        comment: 'People who buy things',
+        columns: columns(CUSTOMER_COLUMNS),
+      },
+      { name: 'orders', view: false, comment: '', columns: columns(ORDER_COLUMNS) },
+      {
+        name: 'products',
+        view: false,
+        comment: '',
+        columns: columns([
+          column('products', 'id', 'int', false),
+          column('products', 'sku', 'varchar', false),
+          column('products', 'title', 'varchar', false),
+        ]),
+      },
+      { name: 'open_orders', view: true, comment: '', columns: columns(ORDER_COLUMNS.slice(0, 3)) },
+    ]
+  }
+
+  schemaDetail(database: string): Promise<SchemaDetail> {
+    if (database !== 'shop') return Promise.resolve({ database, tables: [], foreignKeys: [] })
     return Promise.resolve({
       database,
-      tables: [
-        {
-          name: 'customers',
-          view: false,
-          comment: 'People who buy things',
-          columns: columns(CUSTOMER_COLUMNS),
-        },
-        { name: 'orders', view: false, comment: '', columns: columns(ORDER_COLUMNS) },
-        {
-          name: 'products',
-          view: false,
-          comment: '',
-          columns: columns([
-            column('products', 'id', 'int', false),
-            column('products', 'sku', 'varchar', false),
-            column('products', 'title', 'varchar', false),
-          ]),
-        },
-        {
-          name: 'open_orders',
-          view: true,
-          comment: '',
-          columns: columns(ORDER_COLUMNS.slice(0, 3)),
-        },
-      ],
-      foreignKeys: [
-        {
-          table: 'orders',
-          column: 'customer',
-          refSchema: 'shop',
-          refTable: 'customers',
-          refColumn: 'name',
-        },
-      ],
+      tables: this.demoTables().map((t) => ({ ...t, comment: '', columns: [] })),
+      foreignKeys: [],
+    })
+  }
+
+  tableColumns(database: string, names: string[]): Promise<TableColumns> {
+    if (database !== 'shop') return Promise.resolve({ tables: [], foreignKeys: [] })
+    return Promise.resolve({
+      tables: this.demoTables().filter((t) => names.includes(t.name)),
+      foreignKeys: names.includes('orders')
+        ? [
+            {
+              table: 'orders',
+              column: 'customer',
+              refSchema: 'shop',
+              refTable: 'customers',
+              refColumn: 'name',
+            },
+          ]
+        : [],
     })
   }
 

@@ -1,7 +1,7 @@
 import { CompletionContext, type Completion, type CompletionResult } from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
 import { describe, expect, it, vi } from 'vitest'
-import type { SchemaColumn, SchemaDetail, SchemaTable } from '@shared/driver'
+import type { SchemaColumn, SchemaDetail, SchemaTable, TableColumns } from '@shared/driver'
 import { SchemaCache, type SchemaLoader } from './schema-cache'
 import { sqlCompletionSource } from './source'
 
@@ -64,12 +64,30 @@ const ANALYTICS: SchemaDetail = {
 
 function loader(
   overrides: Partial<SchemaLoader> = {},
-): SchemaLoader & { detail: ReturnType<typeof vi.fn> } {
+): SchemaLoader & { detail: ReturnType<typeof vi.fn>; columns: ReturnType<typeof vi.fn> } {
   const details: Record<string, SchemaDetail> = { shop: SHOP, analytics: ANALYTICS }
   return {
+    // The list of tables carries names only; the columns come per table.
     detail: vi.fn((_c: string, d: string) =>
-      details[d] ? Promise.resolve(details[d]!) : Promise.reject(new Error('no such database')),
+      details[d]
+        ? Promise.resolve({
+            database: d,
+            tables: details[d]!.tables.map((t) => ({ ...t, comment: '', columns: [] })),
+            foreignKeys: [],
+          })
+        : Promise.reject(new Error('no such database')),
     ),
+    columns: vi.fn((_c: string, d: string, names: string[]) => {
+      const wanted = new Set(names.map((n) => n.toLowerCase()))
+      const detail = details[d]
+      const tables = (detail?.tables ?? []).filter((t) => wanted.has(t.name.toLowerCase()))
+      return Promise.resolve({
+        tables,
+        foreignKeys: (detail?.foreignKeys ?? []).filter((k) =>
+          tables.some((t) => t.name === k.table),
+        ),
+      })
+    }),
     databases: vi.fn(() => Promise.resolve(['analytics', 'information_schema', 'shop'])),
     ...overrides,
   } as never
@@ -109,7 +127,7 @@ describe('table names', () => {
         'analytics',
       ]),
     )
-    expect(find(r, 'orders')).toMatchObject({ type: 'class', detail: 'table', info: 'Every sale' })
+    expect(find(r, 'orders')).toMatchObject({ type: 'class', detail: 'table' })
     expect(find(r, 'open_orders')).toMatchObject({ type: 'interface', detail: 'view' })
     expect(find(r, 'shop')).toMatchObject({ type: 'namespace', detail: 'database' })
   })
@@ -206,9 +224,30 @@ describe('column names', () => {
     expect(labels(r)).toEqual(['id', 'name', 'email'])
   })
 
-  it('offers the columns of the whole database before FROM is typed, named by table', async () => {
-    const r = await complete('SELECT na|')
-    expect(find(r, 'name')).toMatchObject({ detail: 'varchar(120) · customers' })
+  it('reads only the columns of the tables a statement names', async () => {
+    const l = loader()
+    await complete('SELECT to| FROM orders', { cache: new SchemaCache(l) })
+    expect(l.columns).toHaveBeenCalledTimes(1)
+    expect(l.columns).toHaveBeenCalledWith('c1', 'shop', ['orders'])
+  })
+
+  it('asks for a table by the name it really has, however it was typed', async () => {
+    const l = loader()
+    const r = await complete('SELECT to| FROM ORDERS', { cache: new SchemaCache(l) })
+    expect(l.columns).toHaveBeenCalledWith('c1', 'shop', ['orders'])
+    expect(labels(r)).toContain('total')
+  })
+
+  it('reads a table once, however many statements need it', async () => {
+    const l = loader()
+    const cache = new SchemaCache(l)
+    await complete('SELECT to| FROM orders', { cache })
+    await complete('SELECT cu| FROM orders', { cache })
+    expect(l.columns).toHaveBeenCalledTimes(1)
+  })
+
+  it('has no columns before a statement names a table', async () => {
+    expect(await complete('SELECT na|')).toBeNull()
   })
 
   it('waits for an explicit request before listing every column at an empty spot', async () => {
@@ -243,6 +282,19 @@ describe('where it says nothing', () => {
     expect(labels(await complete('SELECT * FROM |', { cache }))).toContain('orders')
   })
 
+  it('says why, once, when the schema cannot be read', async () => {
+    const failures: string[] = []
+    const broken = new SchemaCache(
+      loader({
+        detail: vi.fn(() => Promise.reject(new Error('Table is busy'))),
+        databases: vi.fn(() => Promise.reject(new Error('Access denied'))),
+      }),
+      (_connection, what, error) => failures.push(`${what}: ${(error as Error).message}`),
+    )
+    expect(await complete('SELECT * FROM |', { cache: broken, explicit: true })).toBeNull()
+    expect(failures).toEqual(['the tables of shop: Table is busy', 'the databases: Access denied'])
+  })
+
   it('has nothing for a database that does not exist', async () => {
     expect(await complete('SELECT * FROM nosuch.|')).toBeNull()
   })
@@ -258,7 +310,9 @@ describe('SchemaCache', () => {
       cache.detail('c1', 'shop'),
     ])
     expect(l.detail).toHaveBeenCalledTimes(1)
-    expect(cache.peek('c1', 'shop')).toBe(SHOP)
+    expect(cache.peek('c1', 'shop')!.tables.map((t) => t.name)).toEqual(
+      SHOP.tables.map((t) => t.name),
+    )
     expect(cache.peek('c1', 'analytics')).toBeUndefined()
   })
 
@@ -270,7 +324,7 @@ describe('SchemaCache', () => {
     expect(l.detail).toHaveBeenCalledTimes(2)
     cache.invalidate('c1', 'shop')
     expect(cache.peek('c1', 'shop')).toBeUndefined()
-    expect(cache.peek('c2', 'shop')).toBe(SHOP)
+    expect(cache.peek('c2', 'shop')).toBeDefined()
     await cache.detail('c1', 'shop')
     expect(l.detail).toHaveBeenCalledTimes(3)
     cache.invalidate('c2')
@@ -288,5 +342,82 @@ describe('SchemaCache', () => {
     expect(await cache.databases('c1')).toEqual(['shop'])
     expect(await cache.databases('c1')).toEqual(['shop'])
     expect(l.databases).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('SchemaCache columns and status', () => {
+  it('reads the missing tables in one call, and not again', async () => {
+    const l = loader()
+    const cache = new SchemaCache(l)
+    await cache.detail('c1', 'shop')
+    await Promise.all([
+      cache.columns('c1', 'shop', ['orders', 'customers']),
+      cache.columns('c1', 'shop', ['orders']),
+    ])
+    expect(l.columns).toHaveBeenCalledTimes(1)
+    expect(cache.peekTable('c1', 'shop', 'ORDERS')!.columns.map((c) => c.name)).toContain('total')
+    expect(cache.peekForeignKeys('c1', 'shop', 'orders')).toHaveLength(1)
+    await cache.columns('c1', 'shop', ['orders', 'open_orders'])
+    expect(l.columns).toHaveBeenCalledTimes(2)
+    expect(l.columns).toHaveBeenLastCalledWith('c1', 'shop', ['open_orders'])
+  })
+
+  it('does not ask again for a table the server does not have', async () => {
+    const l = loader()
+    const cache = new SchemaCache(l)
+    await cache.columns('c1', 'shop', ['ghost'])
+    await cache.columns('c1', 'shop', ['ghost'])
+    expect(l.columns).toHaveBeenCalledTimes(1)
+    expect(cache.peekTable('c1', 'shop', 'ghost')).toBeUndefined()
+  })
+
+  it('says how far it has got, and tells those who are watching', async () => {
+    let release: (v: { tables: SchemaTable[]; foreignKeys: [] }) => void = () => undefined
+    const l = loader({
+      columns: vi.fn(
+        () => new Promise<TableColumns>((resolve) => (release = resolve as typeof release)),
+      ),
+    })
+    const cache = new SchemaCache(l)
+    const seen: string[] = []
+    cache.subscribe(() => {
+      const s = cache.status('c1', 'shop')
+      seen.push(`${s.state}:${s.tables}:${s.reading}:${s.withColumns}`)
+    })
+    expect(cache.status('c1', 'shop').state).toBe('idle')
+    const list = cache.detail('c1', 'shop')
+    expect(cache.status('c1', 'shop')).toMatchObject({ state: 'loading' })
+    await list
+    expect(cache.status('c1', 'shop')).toMatchObject({ state: 'ready', tables: 4, reading: 0 })
+    const reading = cache.columns('c1', 'shop', ['orders'])
+    expect(cache.status('c1', 'shop')).toMatchObject({ reading: 1 })
+    release({ tables: [SHOP.tables[0]!], foreignKeys: [] })
+    await reading
+    expect(cache.status('c1', 'shop')).toMatchObject({ state: 'ready', reading: 0, withColumns: 1 })
+    expect(seen).toEqual(['loading:0:0:0', 'ready:4:0:0', 'ready:4:1:0', 'ready:4:0:1'])
+  })
+
+  it('reports a failure with its reason, and a new read after invalidate clears it', async () => {
+    const l = loader({
+      detail: vi.fn().mockRejectedValueOnce(new Error('Access denied')).mockResolvedValue(SHOP),
+    })
+    const cache = new SchemaCache(l, () => undefined)
+    expect(await cache.detail('c1', 'shop')).toBeNull()
+    expect(cache.status('c1', 'shop')).toMatchObject({ state: 'failed', error: 'Access denied' })
+    expect(await cache.detail('c1', 'shop')).not.toBeNull()
+    expect(cache.status('c1', 'shop').state).toBe('ready')
+    cache.invalidate('c1', 'shop')
+    expect(cache.status('c1', 'shop').state).toBe('idle')
+  })
+
+  it('forgets columns with the rest when a connection is invalidated', async () => {
+    const l = loader()
+    const cache = new SchemaCache(l)
+    await cache.detail('c1', 'shop')
+    await cache.columns('c1', 'shop', ['orders'])
+    cache.invalidate('c1')
+    expect(cache.peekTable('c1', 'shop', 'orders')).toBeUndefined()
+    await cache.columns('c1', 'shop', ['orders'])
+    expect(l.columns).toHaveBeenCalledTimes(2)
   })
 })

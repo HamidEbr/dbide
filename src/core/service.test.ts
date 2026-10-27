@@ -231,6 +231,7 @@ describe('row editing', () => {
         fakeSession({
           schemaDetail: (database) => Promise.resolve({ ...detail, database }),
           databaseNames: () => Promise.resolve(['shop', 'mysql']),
+          tableColumns: () => Promise.resolve({ tables: [], foreignKeys: [] }),
         }),
       ),
     )
@@ -247,6 +248,22 @@ describe('row editing', () => {
     await expect(
       t.handlers['schema.detail']({ connectionId: 'm1', database: '' }, ctx),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+
+    await expect(
+      t.handlers['schema.columns']({ connectionId: 'm1', database: 'shop', tables: [] }, ctx),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    await expect(
+      t.handlers['schema.columns'](
+        { connectionId: 'm1', database: 'shop', tables: Array(201).fill('t') },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(
+      await t.handlers['schema.columns'](
+        { connectionId: 'm1', database: 'shop', tables: ['a'] },
+        ctx,
+      ),
+    ).toEqual({ tables: [], foreignKeys: [] })
 
     const bare = setup({ drivers: new DriverRegistry([fakeDriver('mysql')]) })
     await bare.handlers['connections.save']({ config }, ctx)

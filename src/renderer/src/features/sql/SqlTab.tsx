@@ -7,6 +7,7 @@ import { useDialogs } from '@/state/dialogs'
 import { useScripts } from '@/state/scripts'
 import type { Tab } from '@/state/workbench'
 import { cancelFromEditor, runFromEditor, setWritable } from './actions'
+import { SchemaStatusChip } from './completion/SchemaStatus'
 import { MongoEditor } from './editor/MongoEditor'
 import { SqlEditor } from './editor/SqlEditor'
 import { editorFor } from './editor/handles'
@@ -184,6 +185,9 @@ export function SqlTab({ tab, active }: { tab: Tab; active: boolean }) {
         <span className="spacer" />
 
         <ScriptName scriptId={scriptId} />
+        {isMongo ? null : (
+          <SchemaStatusChip connectionId={connection.id} database={script.database} />
+        )}
         <SaveState scriptId={scriptId} />
         <IconButton
           label="Local history: earlier versions of this script"

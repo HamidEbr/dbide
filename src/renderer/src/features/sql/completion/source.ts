@@ -5,12 +5,12 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
-import type { SchemaDetail, SchemaTable } from '@shared/driver'
+import type { SchemaDetail, SchemaForeignKey, SchemaTable } from '@shared/driver'
 import { analyzeSql, type SqlContext, type TableRef } from '@shared/sql-context'
 import type { SchemaCache } from './schema-cache'
 
 /** The most a first completion waits for a schema that is still being read. */
-const LOAD_WAIT_MS = 1500
+const LOAD_WAIT_MS = 3000
 /** Names past this many are left out of one popup; typing more narrows it anyway. */
 const MAX_OPTIONS = 4000
 
@@ -86,17 +86,25 @@ function columnOptions(
   }))
 }
 
-/** Tables a column context reads, resolved against the schema they live in. */
-function resolveRefs(
-  refs: TableRef[],
-  env: CompletionEnv,
-  current: string | null,
-): { ref: TableRef; table: SchemaTable | undefined; detail: SchemaDetail | undefined }[] {
+interface Resolved {
+  ref: TableRef
+  database: string | null
+  table: SchemaTable | undefined
+  foreignKeys: SchemaForeignKey[]
+}
+
+/** Tables a column context reads, resolved against what has been read of the schema they live in. */
+function resolveRefs(refs: TableRef[], env: CompletionEnv, current: string | null): Resolved[] {
   return refs.map((ref) => {
     const database = ref.database ?? current
-    const detail = database ? env.cache.peek(env.connectionId, database) : undefined
-    const table = detail?.tables.find((t) => same(t.name, ref.table))
-    return { ref, table, detail }
+    if (!database) return { ref, database, table: undefined, foreignKeys: [] }
+    const name = env.cache.realName(env.connectionId, database, ref.table)
+    return {
+      ref,
+      database,
+      table: env.cache.peekTable(env.connectionId, database, name),
+      foreignKeys: env.cache.peekForeignKeys(env.connectionId, database, name),
+    }
   })
 }
 
@@ -111,7 +119,7 @@ function joinOptions(refs: ReturnType<typeof resolveRefs>): Completion[] {
       [last, earlier],
       [earlier, last],
     ] as const) {
-      for (const key of from.detail?.foreignKeys ?? []) {
+      for (const key of from.foreignKeys) {
         if (!same(key.table, from.ref.table) || !same(key.refTable, to.ref.table)) continue
         const label = `${nameOf(from.ref)}.${key.column} = ${nameOf(to.ref)}.${key.refColumn}`
         options.push({ label, type: 'text', detail: 'foreign key', boost: 9 })
@@ -180,17 +188,36 @@ async function optionsFor(
 
   // A column.
   const refs = analysis.tables
-  const databases = new Set<string>()
-  if (current) databases.add(current)
-  for (const ref of refs) if (ref.database) databases.add(ref.database)
-  if (analysis.qualifierDatabase) databases.add(analysis.qualifierDatabase)
-  if (analysis.qualifier) databases.add(analysis.qualifier)
+  // Which tables' columns are needed, by database: the ones the statement reads, and one named before a dot.
+  const wanted = new Map<string, Set<string>>()
+  const want = (database: string | null, table: string): void => {
+    if (!database) return
+    const names = wanted.get(database) ?? new Set<string>()
+    names.add(table)
+    wanted.set(database, names)
+  }
+  for (const ref of refs) want(ref.database ?? current, ref.table)
+  if (analysis.qualifier) want(analysis.qualifierDatabase ?? current, analysis.qualifier)
+  const lists = new Set<string>(wanted.keys())
+  if (analysis.qualifier) lists.add(analysis.qualifier)
+  // The table lists first, so a name typed in another case is asked for as it really is.
+  await Promise.all([...lists].map((d) => wait(cache.detail(connectionId, d), null, LOAD_WAIT_MS)))
   await Promise.all(
-    [...databases].map((d) => wait(cache.detail(connectionId, d), null, LOAD_WAIT_MS)),
+    [...wanted].map(([database, names]) =>
+      wait(
+        cache.columns(
+          connectionId,
+          database,
+          [...names].map((n) => cache.realName(connectionId, database, n)),
+        ),
+        undefined,
+        LOAD_WAIT_MS,
+      ),
+    ),
   )
   const resolved = resolveRefs(refs, env, current)
   const foreign = new Set(
-    resolved.flatMap((r) => (r.detail?.foreignKeys ?? []).map((k) => `${k.table}.${k.column}`)),
+    resolved.flatMap((r) => r.foreignKeys.map((k) => `${k.table}.${k.column}`)),
   )
 
   if (analysis.qualifier) {
@@ -204,10 +231,10 @@ async function optionsFor(
           (!analysis.qualifierDatabase || same(r.ref.database ?? '', analysis.qualifierDatabase)),
       )
     if (byName?.table) return columnOptions(byName.table, null, foreign)
-    // `shop.orders.` — a table of a named database.
+    // `shop.orders.` or `orders.` — a table that the statement doesn't read, in a named database.
     const database = analysis.qualifierDatabase ?? current
     const direct = database
-      ? cache.peek(connectionId, database)?.tables.find((t) => same(t.name, q))
+      ? cache.peekTable(connectionId, database, cache.realName(connectionId, database, q))
       : undefined
     if (direct) return columnOptions(direct, null, foreign)
     // `shop.` in a column position: the tables of that database.
@@ -242,14 +269,6 @@ async function optionsFor(
           startCompletion(view)
         },
       })
-    }
-  }
-  // Nothing to read from yet (`SELECT |` before FROM): offer the columns of the whole database, named by table.
-  if (refs.length === 0 && current) {
-    const detail = cache.peek(connectionId, current)
-    for (const table of detail?.tables ?? []) {
-      if (options.length > MAX_OPTIONS) break
-      options.push(...columnOptions(table, table.name, foreign).map((o) => ({ ...o, boost: -2 })))
     }
   }
   return options

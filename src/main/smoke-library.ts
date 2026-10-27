@@ -459,9 +459,12 @@ export const COMPLETION_1 = wrap(`
     // A statement that changes the schema makes autocomplete read it again.
     const before = (await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })).tables.length
     check('the core serves the database’s tables, columns and foreign keys', before === 4, before)
-    const detail = await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })
+    const listed = await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })
+    check('the list of tables carries names and kinds, not columns', listed.tables.every((t) => t.columns.length === 0) && listed.tables.some((t) => t.view), JSON.stringify(listed.tables[0]))
+    const detail = await call('schema.columns', { connectionId: 'sql-dev', database: 'shop', tables: ['orders'] })
     const orders = detail.tables.find((t) => t.name === 'orders')
-    check('with types and keys', orders.columns.find((c) => c.name === 'id').key === 'PRI' && orders.columns.find((c) => c.name === 'customer').type === 'varchar' && detail.foreignKeys.length === 1, JSON.stringify(detail.foreignKeys))
+    check('and the columns of a table are read on their own, with types and keys', detail.tables.length === 1 && orders.columns.find((c) => c.name === 'id').key === 'PRI' && orders.columns.find((c) => c.name === 'customer').type === 'varchar' && detail.foreignKeys.length === 1, JSON.stringify(detail.foreignKeys))
+    check('the toolbar says how many tables autocomplete knows', /4 tables|Reading/.test((document.querySelector('.workbench-sql:not([hidden]) .schema-status') || {}).textContent || ''), (document.querySelector('.schema-status') || {}).textContent)
     const names = await call('schema.databases', { connectionId: 'sql-dev' })
     check('and the databases the login can see', names.includes('shop') && names.includes('analytics'), names.join(','))
 `)
