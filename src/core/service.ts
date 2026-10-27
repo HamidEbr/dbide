@@ -578,6 +578,41 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       await sessions.close(consoleKey(consoleId))
     },
 
+    'schema.databases': async (input, ctx) => {
+      const { connectionId } = validateRedisTarget({ ...(input as object), db: 0 })
+      const { session } = await connectionSession(connectionId, ctx)
+      if (!session.databaseNames) return []
+      try {
+        return await session.databaseNames(ctx.signal)
+      } catch (error) {
+        await dropIfDead(connectionKey(connectionId), error)
+        throw error
+      }
+    },
+
+    'schema.detail': async (input, ctx) => {
+      const { connectionId, database } = (input ?? {}) as {
+        connectionId?: unknown
+        database?: unknown
+      }
+      if (
+        typeof connectionId !== 'string' ||
+        typeof database !== 'string' ||
+        !connectionId ||
+        !database
+      ) {
+        throw new RpcError('INVALID_INPUT', 'Name a connection and a database.')
+      }
+      const { session } = await connectionSession(connectionId, ctx)
+      if (!session.schemaDetail) return { database, tables: [], foreignKeys: [] }
+      try {
+        return await session.schemaDetail(database, ctx.signal)
+      } catch (error) {
+        await dropIfDead(connectionKey(connectionId), error)
+        throw error
+      }
+    },
+
     'schema.fields': async (input, ctx) => {
       const { connectionId, database, collection } = validateSampleFields(input)
       const { session } = await connectionSession(connectionId, ctx)

@@ -1,11 +1,12 @@
 import {
   autocompletion,
+  type CompletionSource,
   closeBrackets,
   closeBracketsKeymap,
   completionKeymap,
 } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { MySQL, sql } from '@codemirror/lang-sql'
+import { keywordCompletionSource, MySQL, sql } from '@codemirror/lang-sql'
 import { bracketMatching, indentOnInput } from '@codemirror/language'
 import { searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState } from '@codemirror/state'
@@ -18,37 +19,29 @@ import {
   lineNumbers,
   placeholder,
 } from '@codemirror/view'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { splitStatements, statementAt } from '@shared/sql'
+import { analyzeSql } from '@shared/sql-context'
 import { formatShortcut } from '@/commands/keybinding'
-import { coreLink } from '@/ipc/link'
 import { notify } from '@/state/notices'
 import { useScripts } from '@/state/scripts'
 import { registerEditor } from './handles'
+import { schemaCache } from '../completion/schema-cache'
+import { sqlCompletionSource } from '../completion/source'
 import { editorTheme } from './theme'
 
-const mysql = (schema: Record<string, string[]>) =>
-  sql({ dialect: MySQL, schema, upperCaseKeywords: false })
+const mysql = () => sql({ dialect: MySQL, upperCaseKeywords: false })
 
-/** Table and column names for autocomplete. Best effort: the editor works without them. */
-function useCompletionSchema(
-  connectionId: string,
-  database: string | null,
-): Record<string, string[]> {
-  const [schema, setSchema] = useState<Record<string, string[]>>({})
-  useEffect(() => {
-    let cancelled = false
-    coreLink
-      .call('schema.completion', { connectionId, database })
-      .then((result) => {
-        if (!cancelled) setSchema(result)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [connectionId, database])
-  return schema
+const keywords = keywordCompletionSource(MySQL, false)
+
+/** Keywords and functions where they belong: not where a table or a database is being named. */
+const keywordSource: CompletionSource = (context) => {
+  const analysis = analyzeSql(context.state.doc.toString(), context.pos)
+  if (analysis.kind === 'none' || analysis.kind === 'table' || analysis.kind === 'database') {
+    return null
+  }
+  if (analysis.kind === 'column' && analysis.qualifier !== null) return null
+  return keywords(context)
 }
 
 interface SqlEditorProps {
@@ -63,7 +56,14 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const language = useMemo(() => new Compartment(), [])
-  const schema = useCompletionSchema(connectionId, database)
+  // The editor is built once per script; the database it asks about can change underneath it.
+  const live = useRef({ database })
+  useEffect(() => {
+    live.current = { database }
+    // Read the names now, so the first suggestion doesn't wait for the server.
+    if (database) void schemaCache.detail(connectionId, database)
+    void schemaCache.databases(connectionId)
+  }, [connectionId, database])
   useEffect(() => {
     const parent = host.current
     if (!parent) return
@@ -90,8 +90,17 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
           indentOnInput(),
           bracketMatching(),
           closeBrackets(),
-          autocompletion(),
-          language.of(mysql({})),
+          autocompletion({
+            override: [
+              sqlCompletionSource({
+                connectionId,
+                database: () => live.current.database,
+                cache: schemaCache,
+              }),
+              keywordSource,
+            ],
+          }),
+          language.of(mysql()),
           placeholder(
             `Write SQL. ${run} runs the statement under the cursor, ${runAll} runs the script.`,
           ),
@@ -171,11 +180,7 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
       view.destroy()
       viewRef.current = null
     }
-  }, [scriptId, language])
-
-  useEffect(() => {
-    viewRef.current?.dispatch({ effects: language.reconfigure(mysql(schema)) })
-  }, [schema, language])
+  }, [scriptId, language, connectionId])
 
   useEffect(() => {
     if (active) viewRef.current?.focus()

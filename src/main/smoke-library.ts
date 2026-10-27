@@ -426,6 +426,46 @@ export const EXPORT_1 = wrap(`
     )
 `)
 
+/** Autocomplete in the real editor: tables, databases, columns by alias, joins from foreign keys, and DDL refreshing it. */
+export const COMPLETION_1 = wrap(`
+    await closeAllSqlTabs()
+    await sidebar('Connections')
+    const id = ui.createScript({ connectionId: 'sql-dev', database: 'shop', text: '', name: 'completion' })
+    await waitFor(() => vis('.cm-content'), 'the editor')
+    await waitFor(async () => (await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })).tables.length > 0, 'the schema')
+    const popup = () => [...document.querySelectorAll('.cm-tooltip-autocomplete li')].map((li) => li.textContent)
+    const typeAndWait = async (text, expected) => {
+      await typeInEditor(text)
+      await waitFor(() => popup().some((t) => t.includes(expected)), 'a suggestion containing ' + expected, 8000)
+      return popup()
+    }
+
+    const tables = await typeAndWait('SELECT * FROM or', 'orders')
+    check('typing after FROM suggests the tables of the database', tables.some((t) => t.includes('orders')) && tables.some((t) => t.includes('open_orders')), tables.join(' | '))
+    check('a view is marked as one, and a table says what it is', tables.some((t) => t.includes('open_orders') && t.includes('view')) && tables.some((t) => t.includes('orders') && t.includes('table')), tables.join(' | '))
+
+    const databases = await typeAndWait('USE sh', 'shop')
+    check('after USE it suggests databases, not tables', databases.some((t) => t.includes('shop')) && !databases.some((t) => t.includes('orders')), databases.join(' | '))
+
+    const aliased = await typeAndWait('SELECT * FROM orders o JOIN customers c ON o.id = c.id WHERE c.na', 'name')
+    check('a column is suggested for the alias before the dot, from that table only', aliased.some((t) => t.includes('name')) && !aliased.some((t) => t.includes('total')), aliased.join(' | '))
+
+    // The editor text is replaced whole here, where a person types a letter at a time: close the last popup first.
+    press(vis('.cm-content'), 'Escape')
+    await sleep(300)
+    await typeAndWait('SELECT * FROM orders o JOIN customers c ON o', 'o.customer = c.name')
+    check('after ON it suggests the join a foreign key makes', popup().some((t) => t.includes('o.customer = c.name') && t.includes('foreign key')), popup().join(' | '))
+
+    // A statement that changes the schema makes autocomplete read it again.
+    const before = (await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })).tables.length
+    check('the core serves the database’s tables, columns and foreign keys', before === 4, before)
+    const detail = await call('schema.detail', { connectionId: 'sql-dev', database: 'shop' })
+    const orders = detail.tables.find((t) => t.name === 'orders')
+    check('with types and keys', orders.columns.find((c) => c.name === 'id').key === 'PRI' && orders.columns.find((c) => c.name === 'customer').type === 'varchar' && detail.foreignKeys.length === 1, JSON.stringify(detail.foreignKeys))
+    const names = await call('schema.databases', { connectionId: 'sql-dev' })
+    check('and the databases the login can see', names.includes('shop') && names.includes('analytics'), names.join(','))
+`)
+
 /** A result with 300 columns: only the ones on screen are drawn, and the rest are one key away. */
 export const GRID_WIDE = wrap(`
     await sidebar('Connections')

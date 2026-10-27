@@ -178,6 +178,38 @@ export function maskSql(sql: string): string {
   return masked
 }
 
+/** Like `maskSql`, but quoted names such as `orders` stay, because autocomplete has to read them. */
+export function maskLiterals(sql: string): string {
+  let masked = ''
+  for (const segment of scan(sql)) {
+    const text = sql.slice(segment.start, segment.end)
+    masked +=
+      segment.kind === 'string' || segment.kind === 'comment' ? text.replace(/[^\n]/g, ' ') : text
+  }
+  return masked
+}
+
+/** Whether the offset is inside a string or a comment, where names are not completed. */
+export function insideLiteral(sql: string, offset: number): boolean {
+  for (const segment of scan(sql)) {
+    if (segment.kind !== 'string' && segment.kind !== 'comment') continue
+    // Just after the opening mark is inside; just after the closing one is not, unless it never closed.
+    if (offset > segment.start && offset < segment.end) return true
+    if (offset === segment.end && segment.end === sql.length && segment.kind === 'string') {
+      const text = sql.slice(segment.start, segment.end)
+      return text.length < 2 || text[text.length - 1] !== text[0]
+    }
+    if (
+      offset === segment.end &&
+      segment.kind === 'comment' &&
+      !sql.slice(segment.start, segment.end).endsWith('*/')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 export type StatementKind =
   'read' | 'write' | 'ddl' | 'admin' | 'transaction' | 'session' | 'unknown'
 

@@ -1,5 +1,7 @@
 import { createConnection, escapeId, type Connection, type ConnectionOptions } from 'mysql2'
 import type {
+  SchemaDetail,
+  SchemaTable,
   DriverSession,
   ExecuteRequest,
   ResultBatch,
@@ -108,6 +110,67 @@ export class MysqlSession implements DriverSession {
     const schema: Record<string, string[]> = {}
     for (const [table, column] of rows) (schema[String(table)] ??= []).push(String(column))
     return schema
+  }
+
+  async databaseNames(signal: AbortSignal): Promise<string[]> {
+    signal.throwIfAborted()
+    const rows = await this.query(
+      'SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME',
+    )
+    return rows.map(([name]) => String(name))
+  }
+
+  async schemaDetail(database: string, signal: AbortSignal): Promise<SchemaDetail> {
+    signal.throwIfAborted()
+    const tableRows = await this.query(
+      `SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`,
+      [database],
+    )
+    signal.throwIfAborted()
+    const columnRows = await this.query(
+      `SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION`,
+      [database],
+    )
+    signal.throwIfAborted()
+    const keyRows = await this.query(
+      `SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+         FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`,
+      [database],
+    )
+    const tables = new Map<string, SchemaTable>()
+    for (const [name, type, comment] of tableRows) {
+      tables.set(String(name), {
+        name: String(name),
+        view: String(type).toUpperCase().includes('VIEW'),
+        comment: String(comment ?? ''),
+        columns: [],
+      })
+    }
+    for (const [table, name, type, nullable, key, comment] of columnRows) {
+      tables.get(String(table))?.columns.push({
+        name: String(name),
+        type: String(type),
+        nullable: String(nullable).toUpperCase() === 'YES',
+        key: key === 'PRI' || key === 'UNI' || key === 'MUL' ? key : '',
+        comment: String(comment ?? ''),
+      })
+    }
+    return {
+      database,
+      tables: [...tables.values()],
+      foreignKeys: keyRows.map(([table, column, refSchema, refTable, refColumn]) => ({
+        table: String(table),
+        column: String(column),
+        refSchema: String(refSchema),
+        refTable: String(refTable),
+        refColumn: String(refColumn),
+      })),
+    }
   }
 
   async describeTable(

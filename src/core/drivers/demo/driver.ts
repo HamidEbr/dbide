@@ -12,6 +12,8 @@ import type {
   DriverSession,
   ExecuteRequest,
   ResultBatch,
+  SchemaDetail,
+  SchemaTable,
   SessionInfo,
   TreeNode,
 } from '@shared/driver'
@@ -214,6 +216,59 @@ class DemoSession implements DriverSession {
       orders: ORDER_COLUMNS.map((c) => c.name),
       customers: ['id', 'name', 'email'],
       products: ['id', 'sku', 'title'],
+    })
+  }
+
+  databaseNames(): Promise<string[]> {
+    return Promise.resolve(['analytics', 'information_schema', 'mysql', 'shop'])
+  }
+
+  schemaDetail(database: string): Promise<SchemaDetail> {
+    if (database !== 'shop') return Promise.resolve({ database, tables: [], foreignKeys: [] })
+    const columns = (list: ColumnInfo[]): SchemaTable['columns'] =>
+      list.map((c) => ({
+        name: c.name,
+        type: c.type,
+        nullable: c.nullable === true,
+        key: c.name === 'id' ? 'PRI' : '',
+        comment: '',
+      }))
+    return Promise.resolve({
+      database,
+      tables: [
+        {
+          name: 'customers',
+          view: false,
+          comment: 'People who buy things',
+          columns: columns(CUSTOMER_COLUMNS),
+        },
+        { name: 'orders', view: false, comment: '', columns: columns(ORDER_COLUMNS) },
+        {
+          name: 'products',
+          view: false,
+          comment: '',
+          columns: columns([
+            column('products', 'id', 'int', false),
+            column('products', 'sku', 'varchar', false),
+            column('products', 'title', 'varchar', false),
+          ]),
+        },
+        {
+          name: 'open_orders',
+          view: true,
+          comment: '',
+          columns: columns(ORDER_COLUMNS.slice(0, 3)),
+        },
+      ],
+      foreignKeys: [
+        {
+          table: 'orders',
+          column: 'customer',
+          refSchema: 'shop',
+          refTable: 'customers',
+          refColumn: 'name',
+        },
+      ],
     })
   }
 

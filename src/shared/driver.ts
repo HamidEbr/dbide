@@ -38,6 +38,40 @@ export interface TreeNode {
   scope?: string
 }
 
+/** One column, as autocomplete shows it. */
+export interface SchemaColumn {
+  name: string
+  /** The type as the server writes it: `varchar(120)`, `int unsigned`. */
+  type: string
+  nullable: boolean
+  /** `PRI` for a primary key, `UNI` for a unique one, `MUL` for an indexed one, or empty. */
+  key: '' | 'PRI' | 'UNI' | 'MUL'
+  comment: string
+}
+
+export interface SchemaTable {
+  name: string
+  view: boolean
+  comment: string
+  columns: SchemaColumn[]
+}
+
+/** A foreign key: `table.column` points at `refTable.refColumn`, which may be in another schema. */
+export interface SchemaForeignKey {
+  table: string
+  column: string
+  refSchema: string
+  refTable: string
+  refColumn: string
+}
+
+/** What autocomplete knows about one database: its tables and views with their columns, and how they join. */
+export interface SchemaDetail {
+  database: string
+  tables: SchemaTable[]
+  foreignKeys: SchemaForeignKey[]
+}
+
 export interface ExecuteRequest {
   /** SQL, a Mongo shell expression, a Redis command or a publish payload. */
   text: string
@@ -96,6 +130,10 @@ export interface DriverSession {
   execute(request: ExecuteRequest, signal: AbortSignal): AsyncIterable<ResultBatch>
   /** Table and column names for autocomplete. */
   completionSchema?(database: string | null, signal: AbortSignal): Promise<Record<string, string[]>>
+  /** Every table, view and column of one database, with types and keys, for autocomplete. */
+  schemaDetail?(database: string, signal: AbortSignal): Promise<SchemaDetail>
+  /** The names of the databases this login can see, for autocomplete after `USE` and `db.`. */
+  databaseNames?(signal: AbortSignal): Promise<string[]>
   /** Primary key and column details of one table, for editing rows. */
   describeTable?(schema: string, table: string, signal: AbortSignal): Promise<TableDescription>
   /**

@@ -9,6 +9,7 @@ import { redisScript, type RedisTarget } from './smoke-redis'
 import { startFakeRedis, type FakeRedis } from '../core/drivers/redis/fake-redis'
 import { startFakeBroker, type FakeBroker } from '../core/drivers/rabbitmq/fake-broker'
 import {
+  COMPLETION_1,
   EXPORT_1,
   FILES_1,
   GRID_COMMIT,
@@ -1008,6 +1009,7 @@ export async function runSmoke(window: BrowserWindow, shotsDir?: string): Promis
       page(files2({ id: String(files1.out.id), keep: String(files1.out.keep) })),
     )
     await part('query history', () => page(HISTORY_1))
+    await part('autocomplete', () => page(COMPLETION_1))
     const exported = await part('export', () => page(EXPORT_1))
     await part('files on disk', () => ({
       checks: verifyFiles(dirs, {

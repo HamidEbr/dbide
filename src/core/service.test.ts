@@ -224,6 +224,42 @@ describe('row editing', () => {
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
   })
 
+  it('serves the names autocomplete suggests, and has none for an engine that cannot', async () => {
+    const detail = { database: 'shop', tables: [], foreignKeys: [] }
+    const driver = fakeDriver('mysql', () =>
+      Promise.resolve(
+        fakeSession({
+          schemaDetail: (database) => Promise.resolve({ ...detail, database }),
+          databaseNames: () => Promise.resolve(['shop', 'mysql']),
+        }),
+      ),
+    )
+    const t = setup({ drivers: new DriverRegistry([driver]) })
+    const config = { ...newConnectionDraft('mysql', 'm1'), name: 'Shop' }
+    await t.handlers['connections.save']({ config }, ctx)
+    expect(await t.handlers['schema.databases']({ connectionId: 'm1' }, ctx)).toEqual([
+      'shop',
+      'mysql',
+    ])
+    expect(
+      await t.handlers['schema.detail']({ connectionId: 'm1', database: 'shop' }, ctx),
+    ).toEqual(detail)
+    await expect(
+      t.handlers['schema.detail']({ connectionId: 'm1', database: '' }, ctx),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+
+    const bare = setup({ drivers: new DriverRegistry([fakeDriver('mysql')]) })
+    await bare.handlers['connections.save']({ config }, ctx)
+    expect(await bare.handlers['schema.databases']({ connectionId: 'm1' }, ctx)).toEqual([])
+    expect(
+      await bare.handlers['schema.detail']({ connectionId: 'm1', database: 'x' }, ctx),
+    ).toEqual({
+      database: 'x',
+      tables: [],
+      foreignKeys: [],
+    })
+  })
+
   it('says when an engine cannot describe tables', async () => {
     const driver = fakeDriver('mysql', () => {
       const session = fakeSession()

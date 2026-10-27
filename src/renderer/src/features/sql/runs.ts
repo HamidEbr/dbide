@@ -1,10 +1,12 @@
 import { CoreEvents } from '@shared/api'
 import { DEFAULT_PAGE_SIZE, type QueryEventMessage } from '@shared/query'
 import { RpcError } from '@shared/rpc'
+import { classifyStatement } from '@shared/sql'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
 import { useGuard } from '@/state/guard'
 import { useScripts, type RunState, type ScriptRun, type StatementRun } from '@/state/scripts'
+import { schemaCache } from './completion/schema-cache'
 import { evaluateRun } from './guard'
 import { RowStore, type RowBacking } from './grid/row-store'
 import { pullLiveText, saveNow } from './persistence'
@@ -75,6 +77,15 @@ function applyEvent(message: QueryEventMessage): void {
   if (!scriptId) return
   const { patchRun } = useScripts.getState()
   const { event, statement: index } = message
+
+  // A statement that changes the schema makes the names autocomplete knows out of date.
+  if (event.type === 'ok' || event.type === 'done') {
+    const script = useScripts.getState().scripts[scriptId]
+    const sql = script?.run?.statements[index]?.sql
+    if (script?.connectionId && sql && classifyStatement(sql).kind === 'ddl') {
+      schemaCache.invalidate(script.connectionId)
+    }
+  }
 
   // Rows go straight into the store; React state only changes when something visible does.
   if (event.type === 'rows' || event.type === 'spilled') {

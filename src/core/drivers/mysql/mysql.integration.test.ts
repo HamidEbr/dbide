@@ -535,6 +535,61 @@ describe.skipIf(!parsed)('MySQL driver (live server)', () => {
     }
   })
 
+  describe('autocomplete', () => {
+    it('lists the databases this login can see, the test one among them', async () => {
+      const names = await session.databaseNames!(new AbortController().signal)
+      expect(names).toContain(schema)
+      expect(names).toContain('information_schema')
+    })
+
+    it('reads the tables, views, columns and foreign keys of a database', async () => {
+      const detail = await session.schemaDetail!(schema, new AbortController().signal)
+      expect(detail.database).toBe(schema)
+      const items = detail.tables.find((t) => t.name === 'items')!
+      expect(items).toMatchObject({ view: false })
+      expect(items.columns.map((c) => c.name)).toEqual([
+        'id',
+        'name',
+        'price',
+        'qty',
+        'created',
+        'data',
+        'bin',
+        'note',
+      ])
+      expect(items.columns[0]).toMatchObject({ key: 'PRI', nullable: false })
+      expect(items.columns[1]).toMatchObject({ type: 'varchar(100)', nullable: false, key: 'MUL' })
+      expect(items.columns[2]).toMatchObject({ type: 'decimal(10,2)', nullable: true })
+      expect(detail.foreignKeys).toContainEqual({
+        table: 'orders',
+        column: 'item_id',
+        refSchema: schema,
+        refTable: 'items',
+        refColumn: 'id',
+      })
+    })
+
+    it('sees a view, and a table made after the first read once it asks again', async () => {
+      await collect(
+        session,
+        'CREATE VIEW cheap AS SELECT id, name FROM items WHERE price < 1',
+        schema,
+      )
+      const detail = await session.schemaDetail!(schema, new AbortController().signal)
+      expect(detail.tables.find((t) => t.name === 'cheap')).toMatchObject({ view: true })
+      expect(detail.tables.find((t) => t.name === 'cheap')!.columns.map((c) => c.name)).toEqual([
+        'id',
+        'name',
+      ])
+      await collect(session, 'DROP VIEW cheap', schema)
+    })
+
+    it('returns nothing for a database that does not exist, rather than failing', async () => {
+      const detail = await session.schemaDetail!('dbide_no_such_db', new AbortController().signal)
+      expect(detail.tables).toEqual([])
+    })
+  })
+
   describe('export', () => {
     const memorySink = (): { sink: ExportSink; text: () => string } => {
       const chunks: string[] = []

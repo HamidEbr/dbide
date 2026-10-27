@@ -19,6 +19,7 @@ import {
   openSavedScript,
   restoreWorkspace,
 } from '@/features/sql/scripts'
+import { schemaCache } from '@/features/sql/completion/schema-cache'
 import { useDialogs } from '@/state/dialogs'
 import { useEdits } from '@/state/edits'
 import { useGuard } from '@/state/guard'
@@ -54,7 +55,11 @@ useData.subscribe((state) => {
 
 window.dbide.onCoreState((state) => useData.getState().setCoreState(state))
 
-coreLink.on(CoreEvents.connectionsChanged, () => void useData.getState().refreshConnections())
+coreLink.on(CoreEvents.connectionsChanged, () => {
+  // A connection that was edited may point at another server, so what autocomplete read from it is stale.
+  schemaCache.clear()
+  void useData.getState().refreshConnections()
+})
 coreLink.on(CoreEvents.scriptsChanged, () => void useLibrary.getState().refresh())
 coreLink.on(CoreEvents.notice, (payload) =>
   notify((payload as { message: string }).message, 'warn'),

@@ -10,7 +10,9 @@ The product plan, competitor research and roadmap live in [PLAN.md](PLAN.md). Th
 
 **M0 (foundations)** is done except SSH tunnels, Storybook and signed installers.
 **M1 (MySQL)** is feature-complete for the planned scope: the driver, the schema tree with a filter, the SQL
-editor, the streamed result grid (wide and million-row results included), the **value viewer and record
+editor with **context-aware autocomplete** (tables and views after `FROM` and `JOIN`, databases after `USE` and
+before a dot, the columns of the tables a statement reads by alias, keys first, quoting for names that need it,
+and the join a foreign key makes after `ON`; it reads again after a `CREATE`, `ALTER` or `DROP`), the streamed result grid (wide and million-row results included), the **value viewer and record
 view**, **staged row editing** with a commit shortcut, **generated UPDATE and DELETE statements**, **jumping
 along foreign keys**, **scripts as files with local history**, **query history**, and **export** to CSV, TSV,
 JSON, JSON Lines, SQL, Markdown and Excel, from a result or from a **table or view in the tree** (choose the

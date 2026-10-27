@@ -1,5 +1,5 @@
 import type { ConnectionConfig, ConnectionSecrets, ConnectionSummary, TestStep } from './connection'
-import type { DriverDescriptor, SessionInfo, TreeNode } from './driver'
+import type { DriverDescriptor, SchemaDetail, SessionInfo, TreeNode } from './driver'
 import type { EditBatch, EditResult, TableDescription } from './edit'
 import type { ExportFormat, ExportOptions } from './export'
 import type { DocumentEditBatch, DocumentEditResult } from './mongo/documents'
@@ -82,6 +82,13 @@ export interface CoreApi {
   'schema.completion': {
     params: { connectionId: string; database: string | null }
     result: Record<string, string[]>
+  }
+  /** The names of the databases the login can see, for autocomplete. */
+  'schema.databases': { params: { connectionId: string }; result: string[] }
+  /** The tables, views, columns and foreign keys of one database, for autocomplete. */
+  'schema.detail': {
+    params: { connectionId: string; database: string }
+    result: SchemaDetail
   }
   /** The field names that some documents of a MongoDB collection have, for autocomplete. */
   'schema.fields': {
