@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { insideLiteral } from './sql'
-import { analyzeSql, type SqlContext } from './sql-context'
+import { aliasFollows, analyzeSql, suggestAlias, type SqlContext } from './sql-context'
 
 /** The context at the `|` in a script. */
 function at(script: string): SqlContext {
@@ -176,5 +176,34 @@ describe('insideLiteral', () => {
     expect(insideLiteral(s, 12)).toBe(false)
     expect(insideLiteral(s, 18)).toBe(true)
     expect(insideLiteral("SELECT 'open", 12)).toBe(true)
+  })
+})
+
+describe('table names in full', () => {
+  it('says where a typed qualifier starts, which names are taken, and whether an alias fits', () => {
+    const c = at('SELECT * FROM shop.cu|') as Extract<SqlContext, { kind: 'table' }>
+    expect(c.qualifierFrom).toBe(14)
+    expect(c.aliasable).toBe(true)
+    const j = at('SELECT * FROM orders o JOIN cu|') as Extract<SqlContext, { kind: 'table' }>
+    expect(j.taken).toEqual(expect.arrayContaining(['orders', 'o']))
+    expect(j.aliasable).toBe(true)
+    expect((at('INSERT INTO cu|') as Extract<SqlContext, { kind: 'table' }>).aliasable).toBe(false)
+    expect((at('DELETE FROM cu|') as Extract<SqlContext, { kind: 'table' }>).aliasable).toBe(false)
+  })
+
+  it('knows when an alias already follows', () => {
+    expect(aliasFollows(' o WHERE')).toBe(true)
+    expect(aliasFollows(' AS o')).toBe(true)
+    expect(aliasFollows(' WHERE x')).toBe(false)
+    expect(aliasFollows('')).toBe(false)
+    expect(aliasFollows(' JOIN x')).toBe(false)
+  })
+
+  it('suggests initials, then more letters, and never a taken or reserved word', () => {
+    expect(suggestAlias('orders', new Set())).toBe('o')
+    expect(suggestAlias('order_items', new Set())).toBe('oi')
+    expect(suggestAlias('orders', new Set(['o']))).not.toBe('o')
+    expect(suggestAlias('orders', new Set(['o']))).toMatch(/^[a-z]\w*$/)
+    expect(suggestAlias('inner_things', new Set())).not.toBe('in')
   })
 })

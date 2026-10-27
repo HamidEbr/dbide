@@ -152,6 +152,11 @@ export function validateSettingsPatch(input: unknown): Partial<Settings> {
     if (!(key in DEFAULT_SETTINGS)) invalid(`Unknown setting "${key}"`)
   }
   const { theme, density, navigatorOpen, inspectorOpen, recordHistory } = input
+  for (const key of ['sqlFullPaths', 'sqlUppercaseKeywords'] as const) {
+    if (input[key] === undefined) continue
+    if (typeof input[key] !== 'boolean') invalid(`${key} must be true or false`)
+    patch[key] = input[key]
+  }
   if (theme !== undefined) {
     if (!['system', 'light', 'dark'].includes(theme as string)) invalid('Unknown theme')
     patch.theme = theme as Settings['theme']

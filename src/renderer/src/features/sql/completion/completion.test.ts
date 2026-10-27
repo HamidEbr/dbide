@@ -95,13 +95,19 @@ function loader(
 
 async function complete(
   script: string,
-  options: { database?: string | null; cache?: SchemaCache; explicit?: boolean } = {},
+  options: {
+    database?: string | null
+    cache?: SchemaCache
+    explicit?: boolean
+    full?: boolean
+  } = {},
 ): Promise<CompletionResult | null> {
   const cache = options.cache ?? new SchemaCache(loader())
   const source = sqlCompletionSource({
     connectionId: 'c1',
     database: () => (options.database === undefined ? 'shop' : options.database),
     cache,
+    fullPaths: () => options.full ?? false,
   })
   const pos = script.indexOf('|')
   const state = EditorState.create({ doc: script.replace('|', '') })
@@ -419,5 +425,88 @@ describe('SchemaCache columns and status', () => {
     expect(cache.peekTable('c1', 'shop', 'orders')).toBeUndefined()
     await cache.columns('c1', 'shop', ['orders'])
     expect(l.columns).toHaveBeenCalledTimes(2)
+  })
+})
+
+/** The script after choosing `label` at the `|`, with names written in full, and where the cursor ends. */
+async function choose(script: string, label: string): Promise<string> {
+  const r = await complete(script, { full: true, explicit: true })
+  const option = find(r, label)
+  const pos = script.indexOf('|')
+  let state = EditorState.create({ doc: script.replace('|', '') })
+  const view = {
+    get state() {
+      return state
+    },
+    dispatch: (spec: Parameters<EditorState['update']>[0]) => {
+      state = state.update(spec).state
+    },
+  }
+  if (typeof option.apply !== 'function') throw new Error('expected a function apply')
+  option.apply(view as never, option, r!.from, pos)
+  const at = state.selection.main.head
+  const text = state.doc.toString()
+  return text.slice(0, at) + '|' + text.slice(at)
+}
+
+describe('names in full', () => {
+  it('writes the database, the table and an alias for a table after FROM', async () => {
+    expect(await choose('SELECT * FROM ord|', 'orders')).toBe('SELECT * FROM `shop`.`orders` o|')
+  })
+
+  it('replaces a typed `db.` and an opening backtick', async () => {
+    expect(await choose('SELECT * FROM shop.cust|', 'customers')).toBe(
+      'SELECT * FROM `shop`.`customers` c|',
+    )
+    expect(await choose('SELECT * FROM `shop`.`cu|`', 'customers')).toBe(
+      'SELECT * FROM `shop`.`customers` c|',
+    )
+  })
+
+  it('does not add an alias when one follows, or where none is allowed', async () => {
+    expect(await choose('SELECT * FROM ord| o', 'orders')).toBe('SELECT * FROM `shop`.`orders`| o')
+    expect(await choose('INSERT INTO ord|', 'orders')).toBe('INSERT INTO `shop`.`orders`|')
+  })
+
+  it('avoids an alias that is already taken', async () => {
+    expect(await choose('SELECT * FROM orders o JOIN ord|', 'open_orders')).not.toContain(
+      'open_orders` o|',
+    )
+  })
+
+  it('writes `alias`.`column` for a column typed on its own', async () => {
+    expect(await choose('SELECT * FROM shop.orders o WHERE tot|', 'total')).toBe(
+      'SELECT * FROM shop.orders o WHERE `o`.`total`|',
+    )
+    expect(await choose('SELECT * FROM shop.orders WHERE tot|', 'total')).toBe(
+      'SELECT * FROM shop.orders WHERE `orders`.`total`|',
+    )
+  })
+
+  it('writes only the column after a typed qualifier', async () => {
+    expect(await choose('SELECT * FROM shop.orders o WHERE o.tot|', 'total')).toBe(
+      'SELECT * FROM shop.orders o WHERE o.`total`|',
+    )
+  })
+
+  it('writes the columns of an INSERT without a qualifier', async () => {
+    expect(await choose('INSERT INTO shop.orders (tot|', 'total')).toBe(
+      'INSERT INTO shop.orders (`total`|',
+    )
+  })
+
+  it('writes a foreign-key join condition quoted', async () => {
+    const r = await choose(
+      'SELECT * FROM shop.orders o JOIN shop.customers c ON |',
+      'o.customer = c.name',
+    )
+    expect(r).toBe(
+      'SELECT * FROM shop.orders o JOIN shop.customers c ON `o`.`customer` = `c`.`name`|',
+    )
+  })
+
+  it('leaves names bare when the setting is off', async () => {
+    const r = await complete('SELECT * FROM ord|')
+    expect(find(r, 'orders').apply).toBe('orders')
   })
 })

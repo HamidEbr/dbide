@@ -40,7 +40,14 @@ function tellOnce(connectionId: string, what: string, error: unknown): void {
   if (told.has(connectionId)) return
   told.add(connectionId)
   const reason = error instanceof Error ? error.message : String(error)
-  notify(`Autocomplete couldn’t read ${what}, so it can only suggest keywords. ${reason}`, 'warn')
+  // A server that does not answer is not an autocomplete problem: point at the connection.
+  const hint = /ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|ECONNRESET/.test(reason)
+    ? ' The server could not be reached from here: check the network or VPN, and use Test connection on the connection to see where it stops.'
+    : ''
+  notify(
+    `Autocomplete couldn’t read ${what}, so it can only suggest keywords. ${reason}.${hint}`,
+    'warn',
+  )
 }
 
 interface Known {

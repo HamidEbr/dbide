@@ -59,6 +59,47 @@ export function SettingsView() {
       </section>
 
       <section className="form-section">
+        <h2>SQL editor</h2>
+        <div className="setting-row">
+          <div>
+            <h3>Complete names in full</h3>
+            <p className="muted">
+              A table is written as <span className="mono">`shop`.`orders` o</span>, with a short
+              alias, and a column as <span className="mono">`o`.`id`</span>. Off writes the bare
+              name.
+            </p>
+          </div>
+          <Segmented<'on' | 'off'>
+            label="Complete names in full"
+            value={settings.sqlFullPaths ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(value) => void updateSettings({ sqlFullPaths: value === 'on' })}
+          />
+        </div>
+        <div className="setting-row">
+          <div>
+            <h3>Capital keywords</h3>
+            <p className="muted">
+              Autocomplete writes <span className="mono">SELECT</span> and{' '}
+              <span className="mono">COUNT</span>, not <span className="mono">select</span>.
+            </p>
+          </div>
+          <Segmented<'on' | 'off'>
+            label="Capital keywords"
+            value={settings.sqlUppercaseKeywords ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(value) => void updateSettings({ sqlUppercaseKeywords: value === 'on' })}
+          />
+        </div>
+      </section>
+
+      <section className="form-section">
         <h2>Scripts and history</h2>
         <div className="setting-row">
           <div>

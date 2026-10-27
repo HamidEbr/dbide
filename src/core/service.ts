@@ -73,7 +73,14 @@ import {
 const SECRET_NAMES: readonly SecretName[] = ['password', 'sshPassword', 'sshPassphrase']
 
 /** Errors after which a session cannot be reused; the next use opens a fresh one. */
-const DEAD_SESSION_CODES = new Set(['CONNECTION_CLOSED', 'PROTOCOL_CONNECTION_LOST', 'ECONNRESET'])
+const DEAD_SESSION_CODES = new Set([
+  'CONNECTION_CLOSED',
+  'PROTOCOL_CONNECTION_LOST',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ECONNABORTED',
+])
 
 export interface CoreDeps {
   db: DatabaseSync

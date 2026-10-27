@@ -27,7 +27,16 @@ interface Typed {
 export type SqlContext =
   | ({ kind: 'database' } & Typed)
   /** A table or view. `qualifier` is the database typed before the dot, if any. */
-  | ({ kind: 'table'; qualifier: string | null } & Typed)
+  | ({
+      kind: 'table'
+      qualifier: string | null
+      /** Where the `db.` typed before the name starts, so a choice can rewrite it whole. Null with no qualifier. */
+      qualifierFrom: number | null
+      /** A table here can take an alias (FROM, JOIN, UPDATE), unlike INSERT INTO, DELETE FROM or DROP TABLE. */
+      aliasable: boolean
+      /** The aliases and table names the statement already uses, in lower case, which a new alias must not repeat. */
+      taken: string[]
+    } & Typed)
   /**
    * A column. `qualifier` is what was typed before the dot (an alias, a table, or a database), with
    * `qualifierDatabase` when two names were typed (`shop.orders.`). `tables` are the tables the statement reads.
@@ -253,6 +262,7 @@ export function analyzeSql(script: string, offset: number): SqlContext {
   let head = before.slice(0, quoted ? wordStart - 1 : wordStart)
   let qualifier: string | null = null
   let qualifierDatabase: string | null = null
+  let qualifierFrom: number | null = null
   const name = '(`(?:[^`]|``)*`|[A-Za-z_$][\\w$]*)'
   const dotted = new RegExp(`(?:${name}\\s*\\.\\s*)?${name}\\s*\\.\\s*$`).exec(head)
   if (dotted) {
@@ -260,6 +270,7 @@ export function analyzeSql(script: string, offset: number): SqlContext {
       s.startsWith('`') ? s.slice(1, -1).replace(/``/g, '`') : s
     qualifier = unquote(dotted[2]!)
     qualifierDatabase = dotted[1] ? unquote(dotted[1]) : null
+    qualifierFrom = base + dotted.index
     head = head.slice(0, dotted.index)
   }
 
@@ -267,6 +278,10 @@ export function analyzeSql(script: string, offset: number): SqlContext {
   // The tokens before the name being typed, which say what kind of name it is.
   const earlier = tokens.filter((t) => t.end <= head.length)
   const refs = tableRefs(tokens)
+  const takenNames = refs.flatMap((r) => [
+    r.table.toLowerCase(),
+    ...(r.alias ? [r.alias.toLowerCase()] : []),
+  ])
 
   if (earlier.length === 0) {
     return qualifier ? { kind: 'none' } : { kind: 'keyword', atStart: true, ...typed }
@@ -281,7 +296,14 @@ export function analyzeSql(script: string, offset: number): SqlContext {
     ['DESCRIBE', 'DESC', 'EXPLAIN'].includes(earlier[0]!.value) &&
     earlier[0]!.type === 'word'
   ) {
-    return { kind: 'table', qualifier, ...typed }
+    return {
+      kind: 'table',
+      qualifier,
+      qualifierFrom,
+      aliasable: false,
+      taken: takenNames,
+      ...typed,
+    }
   }
 
   // INSERT INTO t ( | , — the columns of t.
@@ -344,7 +366,14 @@ export function analyzeSql(script: string, offset: number): SqlContext {
       const pending = after
         .slice(start)
         .filter((x) => !(x.type === 'word' && TABLE_MODIFIERS.has(x.value)))
-      if (pending.length === 0) return { kind: 'table', qualifier, ...typed }
+      if (pending.length === 0) {
+        // A table can take an alias after FROM (but not in DELETE FROM), after JOIN, and after UPDATE.
+        const aliasable =
+          t.value === 'JOIN' ||
+          t.value === 'UPDATE' ||
+          (t.value === 'FROM' && earlier[0]?.value !== 'DELETE')
+        return { kind: 'table', qualifier, qualifierFrom, aliasable, taken: takenNames, ...typed }
+      }
       return qualifier ? { kind: 'none' } : { kind: 'keyword', atStart: false, ...typed }
     }
     const clause = COLUMN_CLAUSES[t.value]
@@ -358,4 +387,73 @@ export function analyzeSql(script: string, offset: number): SqlContext {
       return { kind: 'none' }
   }
   return qualifier ? { kind: 'none' } : { kind: 'keyword', atStart: false, ...typed }
+}
+
+/** Whether a name just completed already has an alias after it: the next word is a name, not a keyword. */
+export function aliasFollows(textAfter: string): boolean {
+  // `AS o` is an alias too, whatever the name after it.
+  if (/^[\w$]*\s+AS\s+(`[^`]*`|[A-Za-z_$][\w$]*)/i.test(textAfter)) return true
+  const match = /^[\w$]*\s+(`[^`]*`|[A-Za-z_$][\w$]*)/.exec(textAfter)
+  if (!match) return false
+  const word = match[1]!
+  return word.startsWith('`') || !NOT_AN_ALIAS.has(word.toUpperCase())
+}
+
+const RESERVED_ALIASES = new Set([
+  'AS',
+  'BY',
+  'DO',
+  'IF',
+  'IN',
+  'IS',
+  'ON',
+  'OR',
+  'TO',
+  'AND',
+  'ASC',
+  'ALL',
+  'FOR',
+  'KEY',
+  'NOT',
+  'SET',
+  'USE',
+  'ROW',
+  'OUT',
+  'MOD',
+  'XOR',
+  'END',
+  'DIV',
+  'INT',
+  'NO',
+  'OF',
+])
+
+/** The words of a table name: `order_items` and `OrderItems` are both order and items. */
+function nameWords(table: string): string[] {
+  return table
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+}
+
+/**
+ * A short alias for a table: its initials (`order_items` → `oi`, `Cities` → `c`), longer when that is taken, and
+ * numbered as a last resort. `taken` holds the aliases and table names the statement already uses, in lower case.
+ */
+export function suggestAlias(table: string, taken: ReadonlySet<string>): string {
+  const words = nameWords(table).map((w) => w.toLowerCase())
+  const initials =
+    words
+      .map((w) => w[0])
+      .join('')
+      .slice(0, 3) || 't'
+  const first = words[0] ?? 't'
+  const candidates = [initials]
+  // More letters of the first word: c, ci, cit, …
+  for (let n = 2; n <= Math.min(first.length, 4); n++)
+    candidates.push(first.slice(0, n) + initials.slice(1))
+  const ok = (a: string): boolean =>
+    !taken.has(a) && !RESERVED_ALIASES.has(a.toUpperCase()) && /^[a-z_]/.test(a)
+  for (const candidate of candidates) if (ok(candidate)) return candidate
+  for (let n = 2; ; n++) if (ok(`${initials}${n}`)) return `${initials}${n}`
 }

@@ -277,6 +277,28 @@ describe('row editing', () => {
     })
   })
 
+  it('drops a connection session that died of a timeout, so the next call reconnects', async () => {
+    let opened = 0
+    const driver = fakeDriver('mysql', () => {
+      opened++
+      return Promise.resolve(
+        fakeSession({
+          schemaDetail: () =>
+            Promise.reject(Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' })),
+        }),
+      )
+    })
+    const t = setup({ drivers: new DriverRegistry([driver]) })
+    await t.handlers['connections.save'](
+      { config: { ...newConnectionDraft('mysql', 'm1'), name: 'Shop' } },
+      ctx,
+    )
+    const ask = () => t.handlers['schema.detail']({ connectionId: 'm1', database: 'shop' }, ctx)
+    await expect(ask()).rejects.toThrow('ETIMEDOUT')
+    await expect(ask()).rejects.toThrow('ETIMEDOUT')
+    expect(opened).toBe(2)
+  })
+
   it('says when an engine cannot describe tables', async () => {
     const driver = fakeDriver('mysql', () => {
       const session = fakeSession()

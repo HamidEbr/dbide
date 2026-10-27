@@ -8,6 +8,13 @@ export interface Settings {
   inspectorOpen: boolean
   /** Keep a log of the statements that are run. Turn off where queries hold secrets. */
   recordHistory: boolean
+  /**
+   * SQL autocomplete writes names in full: `schema`.`table` with a short alias after a table, and `alias`.`column`
+   * for a column. Off, it writes the bare name.
+   */
+  sqlFullPaths: boolean
+  /** SQL autocomplete writes keywords and functions in capitals. */
+  sqlUppercaseKeywords: boolean
 }
 
 /** Row height in pixels per density. Mirrors --row-h in tokens.css; the grid needs the number. */
@@ -23,6 +30,8 @@ export const DEFAULT_SETTINGS: Settings = {
   navigatorOpen: true,
   inspectorOpen: true,
   recordHistory: true,
+  sqlFullPaths: true,
+  sqlUppercaseKeywords: true,
 }
 
 /** Background colors of the title-bar overlay, kept in step with `--bg-1` in tokens.css. */

@@ -5,8 +5,15 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
+import type { EditorView } from '@codemirror/view'
 import type { SchemaDetail, SchemaForeignKey, SchemaTable } from '@shared/driver'
-import { analyzeSql, type SqlContext, type TableRef } from '@shared/sql-context'
+import {
+  aliasFollows,
+  analyzeSql,
+  suggestAlias,
+  type SqlContext,
+  type TableRef,
+} from '@shared/sql-context'
 import type { SchemaCache } from './schema-cache'
 
 /** The most a first completion waits for a schema that is still being read. */
@@ -26,6 +33,8 @@ const RESERVED = new Set(
   ).split(' '),
 )
 
+const quoted = (name: string): string => `\`${name.replace(/`/g, '``')}\``
+
 const quoteIfNeeded = (name: string): string =>
   /^[A-Za-z_][\w$]*$/.test(name) && !RESERVED.has(name.toUpperCase())
     ? name
@@ -36,6 +45,8 @@ export interface CompletionEnv {
   /** The database the script runs in, or null when it hasn't picked one. */
   database: () => string | null
   cache: SchemaCache
+  /** Write names in full: `db`.`table` alias, and `alias`.`column`. */
+  fullPaths?: () => boolean
 }
 
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
@@ -49,31 +60,80 @@ export function currentDatabase(env: CompletionEnv, doc: string, upTo: number): 
 const wait = <T>(promise: Promise<T>, fallback: T, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
 
+/**
+ * Replaces the typed name with a full one. The range reaches back over the `db.` typed before the name and an
+ * opening backtick, and forward over the closing backtick the editor added, so nothing is left doubled.
+ */
+function writeOver(
+  view: EditorView,
+  from: number,
+  to: number,
+  analysis: { quoted: boolean; from: number },
+  insert: string,
+  start?: number | null,
+): void {
+  const begin = start ?? (analysis.quoted ? from - 1 : from)
+  const end = view.state.sliceDoc(to, to + 1) === '`' && analysis.quoted ? to + 1 : to
+  view.dispatch({
+    changes: { from: begin, to: end, insert },
+    selection: { anchor: begin + insert.length },
+  })
+}
+
 function tableOptions(
   detail: SchemaDetail,
   database: string | null,
   qualified: boolean,
+  write?: { analysis: Extract<SqlContext, { kind: 'table' }>; full: boolean },
 ): Completion[] {
   return detail.tables.map((table) => ({
     label: table.name,
     type: table.view ? 'interface' : 'class',
     detail: table.view ? 'view' : database && qualified ? database : 'table',
     ...(table.comment ? { info: table.comment } : {}),
-    apply: quoteIfNeeded(table.name),
+    apply: write?.full
+      ? (view: EditorView, _completion: Completion, from: number, to: number) => {
+          const path = database ? `${quoted(database)}.${quoted(table.name)}` : quoted(table.name)
+          const hasAlias = aliasFollows(view.state.sliceDoc(to))
+          const alias =
+            write.analysis.aliasable && !hasAlias
+              ? ` ${suggestAlias(table.name, new Set(write.analysis.taken))}`
+              : ''
+          writeOver(view, from, to, write.analysis, path + alias, write.analysis.qualifierFrom)
+        }
+      : quoteIfNeeded(table.name),
   }))
+}
+
+/** How a name is written when it is chosen: where the typed part starts, and whether to write names in full. */
+interface Write {
+  full: boolean
+  typed: { quoted: boolean; from: number }
+  /** What qualifies a column (an alias or table name), or null to write the column alone. */
+  prefix?: string | null
 }
 
 function columnOptions(
   table: SchemaTable,
   owner: string | null,
   foreign: ReadonlySet<string>,
+  write: Write,
 ): Completion[] {
   return table.columns.map((column) => ({
     label: column.name,
     type: 'property',
     detail: owner ? `${column.type} · ${owner}` : column.type,
     ...(column.comment ? { info: column.comment } : {}),
-    apply: quoteIfNeeded(column.name),
+    apply: write.full
+      ? (view: EditorView, _completion: Completion, from: number, to: number) =>
+          writeOver(
+            view,
+            from,
+            to,
+            write.typed,
+            `${write.prefix ? `${quoted(write.prefix)}.` : ''}${quoted(column.name)}`,
+          )
+      : quoteIfNeeded(column.name),
     // Keys first: they are what joins and filters usually use.
     boost:
       column.key === 'PRI'
@@ -109,7 +169,7 @@ function resolveRefs(refs: TableRef[], env: CompletionEnv, current: string | nul
 }
 
 /** `a.customer = b.name` for the foreign keys between the table being joined and the ones before it. */
-function joinOptions(refs: ReturnType<typeof resolveRefs>): Completion[] {
+function joinOptions(refs: ReturnType<typeof resolveRefs>, write: Write): Completion[] {
   if (refs.length < 2) return []
   const options: Completion[] = []
   const last = refs[refs.length - 1]!
@@ -122,7 +182,25 @@ function joinOptions(refs: ReturnType<typeof resolveRefs>): Completion[] {
       for (const key of from.foreignKeys) {
         if (!same(key.table, from.ref.table) || !same(key.refTable, to.ref.table)) continue
         const label = `${nameOf(from.ref)}.${key.column} = ${nameOf(to.ref)}.${key.refColumn}`
-        options.push({ label, type: 'text', detail: 'foreign key', boost: 9 })
+        const [a, b] = [nameOf(from.ref), nameOf(to.ref)]
+        options.push({
+          label,
+          type: 'text',
+          detail: 'foreign key',
+          boost: 9,
+          ...(write.full
+            ? {
+                apply: (view: EditorView, _c: Completion, at: number, end: number) =>
+                  writeOver(
+                    view,
+                    at,
+                    end,
+                    write.typed,
+                    `${quoted(a)}.${quoted(key.column)} = ${quoted(b)}.${quoted(key.refColumn)}`,
+                  ),
+              }
+            : {}),
+        })
       }
     }
   }
@@ -163,16 +241,18 @@ async function optionsFor(
   current: string | null,
 ): Promise<Completion[] | null> {
   const { cache, connectionId } = env
+  const full = env.fullPaths?.() ?? false
+  const typed = { quoted: analysis.quoted, from: analysis.from }
 
   if (analysis.kind === 'database') {
     const names = await wait(cache.databases(connectionId), null, LOAD_WAIT_MS)
-    return names ? databaseOptions(names, false) : null
+    return names ? databaseOptions(names, false, full) : null
   }
 
   if (analysis.kind === 'table') {
     if (analysis.qualifier) {
       const detail = await wait(cache.detail(connectionId, analysis.qualifier), null, LOAD_WAIT_MS)
-      return detail ? tableOptions(detail, analysis.qualifier, true) : null
+      return detail ? tableOptions(detail, analysis.qualifier, true, { analysis, full }) : null
     }
     const [detail, names] = await Promise.all([
       current
@@ -181,8 +261,8 @@ async function optionsFor(
       wait(cache.databases(connectionId), null, LOAD_WAIT_MS),
     ])
     return [
-      ...(detail ? tableOptions(detail, current, false) : []),
-      ...(names ? databaseOptions(names, true) : []),
+      ...(detail ? tableOptions(detail, current, false, { analysis, full }) : []),
+      ...(names ? databaseOptions(names, true, full) : []),
     ]
   }
 
@@ -230,13 +310,13 @@ async function optionsFor(
           same(r.ref.table, q) &&
           (!analysis.qualifierDatabase || same(r.ref.database ?? '', analysis.qualifierDatabase)),
       )
-    if (byName?.table) return columnOptions(byName.table, null, foreign)
+    if (byName?.table) return columnOptions(byName.table, null, foreign, { full, typed })
     // `shop.orders.` or `orders.` — a table that the statement doesn't read, in a named database.
     const database = analysis.qualifierDatabase ?? current
     const direct = database
       ? cache.peekTable(connectionId, database, cache.realName(connectionId, database, q))
       : undefined
-    if (direct) return columnOptions(direct, null, foreign)
+    if (direct) return columnOptions(direct, null, foreign, { full, typed })
     // `shop.` in a column position: the tables of that database.
     const inDatabase = cache.peek(connectionId, q)
     return inDatabase ? tableOptions(inDatabase, q, true) : null
@@ -244,16 +324,18 @@ async function optionsFor(
 
   if (analysis.clause === 'insert') {
     const target = resolved[0]?.table
-    return target ? columnOptions(target, null, foreign) : null
+    return target ? columnOptions(target, null, foreign, { full, typed }) : null
   }
 
   const options: Completion[] = []
-  if (analysis.clause === 'on') options.push(...joinOptions(resolved))
+  if (analysis.clause === 'on') options.push(...joinOptions(resolved, { full, typed }))
   const many = resolved.length > 1
   for (const { ref, table } of resolved) {
     if (!table) continue
     const owner = ref.alias ?? ref.table
-    options.push(...columnOptions(table, many ? owner : null, foreign))
+    options.push(
+      ...columnOptions(table, many ? owner : null, foreign, { full, typed, prefix: owner }),
+    )
     // The alias or table name itself, so `o` can become `o.` and go on to its columns.
     if (many || ref.alias) {
       options.push({
@@ -262,10 +344,8 @@ async function optionsFor(
         detail: ref.alias ? ref.table : 'table',
         boost: -1,
         apply: (view, _completion, from, to) => {
-          view.dispatch({
-            changes: { from, to, insert: `${owner}.` },
-            selection: { anchor: from + owner.length + 1 },
-          })
+          const name = full ? quoted(owner) : quoteIfNeeded(owner)
+          writeOver(view, from, to, typed, `${name}.`)
           startCompletion(view)
         },
       })
@@ -274,7 +354,7 @@ async function optionsFor(
   return options
 }
 
-function databaseOptions(names: string[], withDot: boolean): Completion[] {
+function databaseOptions(names: string[], withDot: boolean, full: boolean): Completion[] {
   return names.map((name) => ({
     label: name,
     type: 'namespace',
@@ -283,11 +363,14 @@ function databaseOptions(names: string[], withDot: boolean): Completion[] {
     apply: withDot
       ? (view, _completion, from, to) => {
           view.dispatch({
-            changes: { from, to, insert: `${quoteIfNeeded(name)}.` },
-            selection: { anchor: from + quoteIfNeeded(name).length + 1 },
+            changes: { from, to, insert: `${full ? quoted(name) : quoteIfNeeded(name)}.` },
+            selection: { anchor: from + (full ? quoted(name) : quoteIfNeeded(name)).length + 1 },
           })
           startCompletion(view)
         }
-      : quoteIfNeeded(name),
+      : full
+        ? (view, _completion, from, to) =>
+            writeOver(view, from, to, { quoted: false, from }, quoted(name))
+        : quoteIfNeeded(name),
   }))
 }

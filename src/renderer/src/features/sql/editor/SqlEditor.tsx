@@ -24,6 +24,7 @@ import { splitStatements, statementAt } from '@shared/sql'
 import { analyzeSql } from '@shared/sql-context'
 import { formatShortcut } from '@/commands/keybinding'
 import { notify } from '@/state/notices'
+import { useData } from '@/state/data'
 import { useScripts } from '@/state/scripts'
 import { registerEditor } from './handles'
 import { schemaCache } from '../completion/schema-cache'
@@ -32,7 +33,8 @@ import { editorTheme } from './theme'
 
 const mysql = () => sql({ dialect: MySQL, upperCaseKeywords: false })
 
-const keywords = keywordCompletionSource(MySQL, false)
+const upperKeywords = keywordCompletionSource(MySQL, true)
+const lowerKeywords = keywordCompletionSource(MySQL, false)
 
 /** Keywords and functions where they belong: not where a table or a database is being named. */
 const keywordSource: CompletionSource = (context) => {
@@ -41,7 +43,7 @@ const keywordSource: CompletionSource = (context) => {
     return null
   }
   if (analysis.kind === 'column' && analysis.qualifier !== null) return null
-  return keywords(context)
+  return (useData.getState().settings.sqlUppercaseKeywords ? upperKeywords : lowerKeywords)(context)
 }
 
 interface SqlEditorProps {
@@ -96,6 +98,7 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
                 connectionId,
                 database: () => live.current.database,
                 cache: schemaCache,
+                fullPaths: () => useData.getState().settings.sqlFullPaths,
               }),
               keywordSource,
             ],
