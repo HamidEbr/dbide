@@ -72,6 +72,11 @@ describe('readDbeaver', () => {
     )
     const read = await readDbeaver(join(dir, 'data-sources.json'))
     expect(read!.hasCredentials).toBe(false)
+    expect(read!.credentialsProblem).toBe('missing')
+    writeFileSync(join(dir, 'credentials-config.json'), Buffer.alloc(64, 1))
+    expect((await readDbeaver(join(dir, 'data-sources.json')))!.credentialsProblem).toBe(
+      'unreadable',
+    )
     expect(await readDbeaver(join(dir, 'missing.json'))).toBeNull()
   })
 

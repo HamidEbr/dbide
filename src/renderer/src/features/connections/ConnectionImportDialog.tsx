@@ -15,6 +15,7 @@ interface Found {
   connections: DbeaverConnection[]
   skipped: DbeaverSkipped[]
   hasCredentials: boolean
+  credentialsProblem: 'missing' | 'unreadable' | null
 }
 
 export function ConnectionImportDialog() {
@@ -37,6 +38,7 @@ function DbeaverImportBody() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [count, setCount] = useState(0)
+  const [failed, setFailed] = useState<{ name: string; reason: string }[]>([])
 
   const alreadyHere = (c: DbeaverConnection): boolean =>
     existing.some(
@@ -134,6 +136,7 @@ function DbeaverImportBody() {
         passwords: passwords && canPasswords,
       })
       setCount(result.imported.length)
+      setFailed(result.failed)
       await refresh()
       setPhase('done')
     } catch (e) {
@@ -315,9 +318,13 @@ function DbeaverImportBody() {
                 ? canPasswords
                   ? `Passwords are read from ${info.label}’s own data and kept in secure storage, never shown here. User names come over either way.`
                   : 'None of the chosen connections has a saved password.'
-                : info.passwords
-                  ? 'No saved passwords were found, so connections come over without them.'
-                  : `${info.label} keeps passwords in the system keychain, where DBIDE can’t read them: connections come over without one, and you enter it when you first connect.`}
+                : found.credentialsProblem === 'missing'
+                  ? `No credentials-config.json was found beside ${found.path ?? 'the file'}, so there are no passwords to read. Choose the file from the .dbeaver folder of the workspace that holds them.`
+                  : found.credentialsProblem === 'unreadable'
+                    ? 'The credentials file is there but couldn’t be decrypted. DBeaver may be keeping passwords in its “secure storage” (a setting in its preferences) or the file is in a newer format, so they can’t be read.'
+                    : info.passwords
+                      ? 'No saved passwords were found, so connections come over without them.'
+                      : `${info.label} keeps passwords in the system keychain, where DBIDE can’t read them: connections come over without one, and you enter it when you first connect.`}
             </p>
             <footer>
               {info.input === 'file' ? (
@@ -353,6 +360,11 @@ function DbeaverImportBody() {
                 ? ' Production connections start read-only.'
                 : ''}
             </p>
+            {failed.length > 0 ? (
+              <p className="note-error" role="alert">
+                Not imported: {failed.map((f) => `${f.name} (${f.reason})`).join('; ')}
+              </p>
+            ) : null}
             <footer>
               <Button variant="primary" onClick={close} autoFocus>
                 Done

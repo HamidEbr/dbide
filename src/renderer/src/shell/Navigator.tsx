@@ -12,6 +12,7 @@ import {
   Import,
   FileCode,
   FileUp,
+  Network,
   Folder,
   Hash,
   Inbox,
@@ -330,6 +331,19 @@ export function Navigator() {
                     row.node.kind === 'database') &&
                   connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
                 }
+                canDiagram={
+                  row.type === 'node' &&
+                  row.node.kind === 'database' &&
+                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                }
+                onDiagram={() => {
+                  if (row.type === 'node') {
+                    useDialogs.getState().openDiagram({
+                      connectionId: row.connectionId,
+                      database: row.node.label,
+                    })
+                  }
+                }}
                 canImport={
                   row.type === 'node' &&
                   (row.node.kind === 'table' || row.node.kind === 'database') &&
@@ -380,6 +394,9 @@ interface RowProps {
   /** A table or database of a SQL server, which a file can be imported into. */
   canImport: boolean
   onImport: () => void
+  /** A database of a SQL server, whose tables can be drawn with the keys between them. */
+  canDiagram: boolean
+  onDiagram: () => void
 }
 
 function TreeRowView({
@@ -395,6 +412,8 @@ function TreeRowView({
   onExport,
   canImport,
   onImport,
+  canDiagram,
+  onDiagram,
 }: RowProps) {
   const indent = 8 + row.depth * INDENT
 
@@ -576,6 +595,17 @@ function TreeRowView({
               }}
             >
               <Download size={12} />
+            </IconButton>
+          ) : null}
+          {canDiagram ? (
+            <IconButton
+              label={`Diagram of ${node.label}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onDiagram()
+              }}
+            >
+              <Network size={12} />
             </IconButton>
           ) : null}
           {canImport ? (

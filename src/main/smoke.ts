@@ -10,6 +10,8 @@ import { startFakeRedis, type FakeRedis } from '../core/drivers/redis/fake-redis
 import { startFakeBroker, type FakeBroker } from '../core/drivers/rabbitmq/fake-broker'
 import {
   COMPLETION_1,
+  TOOLS_1,
+  DIAGRAM_1,
   EXPORT_1,
   FILES_1,
   GRID_COMMIT,
@@ -1010,6 +1012,8 @@ export async function runSmoke(window: BrowserWindow, shotsDir?: string): Promis
     )
     await part('query history', () => page(HISTORY_1))
     await part('autocomplete', () => page(COMPLETION_1))
+    await part('pivot, chart and compare', () => page(TOOLS_1))
+    await part('the diagram', () => page(DIAGRAM_1))
     const exported = await part('export', () => page(EXPORT_1))
     await part('files on disk', () => ({
       checks: verifyFiles(dirs, {

@@ -1,5 +1,11 @@
 import type { Density, ThemeSetting } from '@shared/settings'
-import { activeScriptId, cancelFromEditor, runFromEditor } from '@/features/sql/actions'
+import {
+  activeScriptId,
+  cancelFromEditor,
+  runFromEditor,
+  showQueryPlan,
+} from '@/features/sql/actions'
+import { hasResultView, showCurrentResultAs, useResultViews } from '@/features/sql/tools/viewState'
 import { editHandleFor } from '@/features/sql/edit/handles'
 import { editorFor } from '@/features/sql/editor/handles'
 import { exporterFor } from '@/features/sql/export/handles'
@@ -10,6 +16,7 @@ import { defaultConnectionId } from '@/features/sql/target'
 import { useData } from '@/state/data'
 import { useDialogs } from '@/state/dialogs'
 import { notify } from '@/state/notices'
+import { useScripts } from '@/state/scripts'
 import { useWorkbench, workbench, type SidebarView } from '@/state/workbench'
 import { CommandRegistry } from './registry'
 
@@ -75,6 +82,68 @@ export function registerBuiltinCommands(): void {
       title: 'Import connections from another tool…',
       category: 'Connection',
       run: () => useDialogs.getState().openDbeaverImport(),
+    },
+    {
+      id: 'sql.explain',
+      title: 'Show the query plan',
+      category: 'SQL',
+      shortcut: 'Mod+Alt+P',
+      when: inSqlTab,
+      run: () => showQueryPlan(activeScriptId()!),
+    },
+    {
+      id: 'results.viewTable',
+      title: 'Show the result as a table',
+      category: 'Results',
+      shortcut: 'Mod+Alt+1',
+      when: hasResultView,
+      run: () => showCurrentResultAs('grid'),
+    },
+    {
+      id: 'results.viewPivot',
+      title: 'Show the result as a pivot',
+      category: 'Results',
+      shortcut: 'Mod+Alt+2',
+      when: hasResultView,
+      run: () => showCurrentResultAs('pivot'),
+    },
+    {
+      id: 'results.viewChart',
+      title: 'Show the result as a chart',
+      category: 'Results',
+      shortcut: 'Mod+Alt+3',
+      when: hasResultView,
+      run: () => showCurrentResultAs('chart'),
+    },
+    {
+      id: 'results.compare',
+      title: 'Compare this result with another…',
+      category: 'Results',
+      shortcut: 'Mod+Alt+M',
+      when: hasResultView,
+      run: () => {
+        const current = useResultViews.getState().current
+        if (current) useDialogs.getState().openCompare(current)
+      },
+    },
+    {
+      id: 'diagram.open',
+      title: 'Show a diagram of the database',
+      category: 'Connection',
+      shortcut: 'Mod+Alt+D',
+      run: () => {
+        const id = activeScriptId()
+        const script = id ? useScripts.getState().scripts[id] : undefined
+        if (script?.connectionId && script.database) {
+          useDialogs
+            .getState()
+            .openDiagram({ connectionId: script.connectionId, database: script.database })
+        } else {
+          notify(
+            'Open a script on a database first, or use the diagram button beside a database in the tree.',
+          )
+        }
+      },
     },
     {
       id: 'script.new',

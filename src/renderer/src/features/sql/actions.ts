@@ -1,6 +1,7 @@
 import { ENVIRONMENT_POLICIES } from '@shared/environment'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
+import { useDialogs } from '@/state/dialogs'
 import { useGuard } from '@/state/guard'
 import { notify } from '@/state/notices'
 import { useScripts } from '@/state/scripts'
@@ -25,6 +26,22 @@ export function runFromEditor(scriptId: string, mode: 'cursor' | 'all'): void {
     return
   }
   void requestRun(scriptId, statements)
+}
+
+/** Opens the query plan of the statement under the cursor. */
+export function showQueryPlan(scriptId: string): void {
+  const script = useScripts.getState().scripts[scriptId]
+  const connection = useData.getState().connections.find((c) => c.id === script?.connectionId)
+  if (!script || connection?.engine !== 'mysql') {
+    notify('A query plan is shown for MySQL scripts.')
+    return
+  }
+  const sql = editorFor(scriptId)?.statements('cursor')[0]
+  if (!sql) {
+    notify('Put the cursor in a statement first.')
+    return
+  }
+  useDialogs.getState().openExplain({ connectionId: connection.id, database: script.database, sql })
 }
 
 export function cancelFromEditor(scriptId: string): void {

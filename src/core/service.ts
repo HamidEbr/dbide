@@ -398,7 +398,13 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           path = defaultSourcePath(info.value)
         }
       }
-      const none = { path: null, connections: [], skipped: [], hasCredentials: false }
+      const none = {
+        path: null,
+        connections: [],
+        skipped: [],
+        hasCredentials: false,
+        credentialsProblem: null,
+      }
       if (info.input === 'file' && path === null) return none
       const read = await readConnections(info.value, { path, text })
       if (!read) return none
@@ -407,6 +413,8 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
         path,
         connections: read.connections.map((c) => ({
           ...c,
+          // A password DBeaver holds counts even when its own "save password" flag is missing.
+          hasPassword: c.hasPassword || Boolean(read.logins[c.sourceId]?.connection?.password),
           username: read.logins[c.sourceId]?.connection?.user || c.username,
           ssh: c.ssh
             ? { ...c.ssh, username: read.logins[c.sourceId]?.ssh?.user || c.ssh.username }
@@ -414,6 +422,7 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
         })),
         skipped: read.skipped,
         hasCredentials: read.hasCredentials,
+        credentialsProblem: read.credentialsProblem ?? null,
       }
     },
 
@@ -438,54 +447,65 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       const chosen = new Set(ids as string[])
       const taken = new Set(connections.list().map((c) => c.name.toLowerCase()))
       const imported: ConnectionSummary[] = []
+      const failed: { name: string; reason: string }[] = []
       for (const source of read.connections.filter((c) => chosen.has(c.sourceId))) {
         const login = read.logins[source.sourceId]
         let name = source.name
         for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${source.name} (${n})`
         taken.add(name.toLowerCase())
-        const id = randomUUID()
-        const ssh = source.ssh
-        const config = validateConnectionConfig({
-          id,
-          name,
-          engine: source.engine,
-          environment: source.environment,
-          ...(source.folder ? { folder: source.folder } : {}),
-          host: source.host,
-          port: source.port,
-          ...(login?.connection?.user || source.username
-            ? { username: login?.connection?.user || source.username }
-            : {}),
-          ...(source.database ? { database: source.database } : {}),
-          tls: { enabled: source.tls, allowInvalidCertificates: false },
-          ...(ssh
-            ? {
-                ssh: {
-                  enabled: true,
-                  host: ssh.host,
-                  port: ssh.port,
-                  username: login?.ssh?.user || ssh.username,
-                  auth: ssh.auth,
-                  ...(ssh.keyPath ? { privateKeyPath: ssh.keyPath } : {}),
-                },
-              }
-            : {}),
-          options: {},
-        })
-        const typed: ConnectionSecrets = {}
-        if (passwords === true) {
-          if (login?.connection?.password) typed.password = login.connection.password
-          if (ssh?.auth === 'password' && login?.ssh?.password)
-            typed.sshPassword = login.ssh.password
+        try {
+          const id = randomUUID()
+          const ssh = source.ssh
+          const config = validateConnectionConfig({
+            id,
+            name,
+            engine: source.engine,
+            environment: source.environment,
+            ...(source.folder ? { folder: source.folder } : {}),
+            host: source.host,
+            port: source.port,
+            ...(login?.connection?.user || source.username
+              ? { username: login?.connection?.user || source.username }
+              : {}),
+            // A Redis database is a number; anything else DBeaver held there is left out.
+            ...(source.database && (source.engine !== 'redis' || /^\d+$/.test(source.database))
+              ? { database: source.database }
+              : {}),
+            tls: { enabled: source.tls, allowInvalidCertificates: false },
+            ...(ssh
+              ? {
+                  ssh: {
+                    enabled: true,
+                    host: ssh.host,
+                    port: ssh.port,
+                    username: login?.ssh?.user || ssh.username,
+                    auth: ssh.auth,
+                    ...(ssh.keyPath ? { privateKeyPath: ssh.keyPath } : {}),
+                  },
+                }
+              : {}),
+            options: {},
+          })
+          const typed: ConnectionSecrets = {}
+          if (passwords === true) {
+            if (login?.connection?.password) typed.password = login.connection.password
+            if (ssh?.auth === 'password' && login?.ssh?.password)
+              typed.sshPassword = login.ssh.password
+          }
+          const toStore = SECRET_NAMES.filter((n) => (typed[n] ?? '') !== '')
+          if (toStore.length > 0) await requireSecretStore()
+          for (const n of toStore) await secrets.set(secretKey(config.id, n), typed[n]!)
+          connections.save(config)
+          imported.push(summarize(config))
+        } catch (error) {
+          failed.push({
+            name: source.name,
+            reason: error instanceof Error ? error.message : String(error),
+          })
         }
-        const toStore = SECRET_NAMES.filter((n) => (typed[n] ?? '') !== '')
-        if (toStore.length > 0) await requireSecretStore()
-        for (const n of toStore) await secrets.set(secretKey(config.id, n), typed[n]!)
-        connections.save(config)
-        imported.push(summarize(config))
       }
       deps.notify(CoreEvents.connectionsChanged)
-      return { imported }
+      return { imported, failed }
     },
 
     'connections.delete': async ({ id }) => {

@@ -5,6 +5,8 @@ import {
   CircleMinus,
   CirclePause,
   Download,
+  GitCompare,
+  Save,
   LoaderCircle,
 } from 'lucide-react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -23,6 +25,13 @@ import { registerExporter } from './export/handles'
 import { exportBlockedReason, openExport } from './export/open'
 import { ResultGrid } from './grid/ResultGrid'
 import { loadMore } from './runs'
+import { ChartView } from './tools/ChartView'
+import { PivotView } from './tools/PivotView'
+import { useSnapshots } from './tools/snapshots'
+import { useDialogs } from '@/state/dialogs'
+import { notify } from '@/state/notices'
+
+import { useResultViews, type ResultView } from './tools/viewState'
 
 interface ResultTab {
   key: string
@@ -141,6 +150,35 @@ function ResultSummary({
         </span>
       ) : null}
       <span className="spacer" />
+      {documents || statement.status === 'running' ? null : (
+        <>
+          <Button
+            variant="ghost"
+            icon={<Save size={12} />}
+            title="Keep a copy of these rows, to compare a later result against"
+            onClick={() => {
+              useSnapshots.getState().keep({
+                label: oneLine(statement.sql),
+                columns: resultSet.columns.map((c) => c.name),
+                rows: resultSet.store.rows.slice(),
+              })
+              notify('Copy kept. Run the query again, then use Compare.')
+            }}
+          >
+            Keep a copy
+          </Button>
+          <Button
+            variant="ghost"
+            icon={<GitCompare size={12} />}
+            title="Line this result up with another and see what differs"
+            onClick={() =>
+              useDialogs.getState().openCompare({ scriptId, resultSetId: resultSet.id })
+            }
+          >
+            Compare…
+          </Button>
+        </>
+      )}
       {documents ? null : (
         <Button
           variant="ghost"
@@ -170,6 +208,24 @@ function ExporterRegistration({
     if (exportBlockedReason(statement)) return
     return registerExporter(scriptId, () => openExport(scriptId, statement, resultSet))
   }, [scriptId, statement, resultSet])
+  return null
+}
+
+/** Lets the view and compare commands reach the result this pane is showing. */
+function ResultToolsRegistration({
+  scriptId,
+  resultSetId,
+}: {
+  scriptId: string
+  resultSetId: string
+}) {
+  useEffect(() => {
+    useResultViews.getState().setCurrent({ scriptId, resultSetId })
+    return () => {
+      const { current, setCurrent } = useResultViews.getState()
+      if (current?.resultSetId === resultSetId) setCurrent(null)
+    }
+  }, [scriptId, resultSetId])
   return null
 }
 
@@ -246,6 +302,8 @@ export function ResultsPane({
 }) {
   const run = useScripts((state) => state.scripts[scriptId]?.run ?? null)
   const [choice, setChoice] = useState<{ runId: string; key: string } | null>(null)
+  const views = useResultViews((state) => state.views)
+  const setView = useResultViews((state) => state.setView)
 
   if (!run) {
     return (
@@ -288,6 +346,9 @@ export function ResultsPane({
       {active?.resultSet ? (
         <div className="result-body">
           {tabActive && !isDocumentResult(active.resultSet.columns) ? (
+            <ResultToolsRegistration scriptId={scriptId} resultSetId={active.resultSet.id} />
+          ) : null}
+          {tabActive && !isDocumentResult(active.resultSet.columns) ? (
             <ExporterRegistration
               scriptId={scriptId}
               statement={active.statement}
@@ -308,13 +369,38 @@ export function ResultsPane({
               active={tabActive}
             />
           ) : (
-            <ResultGrid
-              key={active.resultSet.id}
-              resultSet={active.resultSet}
-              scriptId={scriptId}
-              statement={active.statement}
-              active={tabActive}
-            />
+            <>
+              <div className="view-switch" role="tablist" aria-label="How to show the result">
+                {(['grid', 'pivot', 'chart'] as const satisfies readonly ResultView[]).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    role="tab"
+                    aria-selected={(views[active.resultSet!.id] ?? 'grid') === v}
+                    className={(views[active.resultSet!.id] ?? 'grid') === v ? 'active' : ''}
+                    onClick={() => setView(active.resultSet!.id, v)}
+                  >
+                    {v === 'grid' ? 'Table' : v === 'pivot' ? 'Pivot' : 'Chart'}
+                  </button>
+                ))}
+              </div>
+              {/* The grid stays mounted, so unsaved cell edits survive a look at the pivot or the chart. */}
+              <div className="view-pane" hidden={(views[active.resultSet.id] ?? 'grid') !== 'grid'}>
+                <ResultGrid
+                  key={active.resultSet.id}
+                  resultSet={active.resultSet}
+                  scriptId={scriptId}
+                  statement={active.statement}
+                  active={tabActive}
+                />
+              </div>
+              {views[active.resultSet.id] === 'pivot' ? (
+                <PivotView key={active.resultSet.id} resultSet={active.resultSet} />
+              ) : null}
+              {views[active.resultSet.id] === 'chart' ? (
+                <ChartView key={active.resultSet.id} resultSet={active.resultSet} />
+              ) : null}
+            </>
           )}
         </div>
       ) : active ? (

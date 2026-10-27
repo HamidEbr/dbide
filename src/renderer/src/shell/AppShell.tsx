@@ -6,6 +6,8 @@ import { Inspector } from '@/features/inspector/Inspector'
 import { DumpDialog } from '@/features/sql/export/DumpDialog'
 import { ConnectionImportDialog } from '@/features/connections/ConnectionImportDialog'
 import { ImportDialog } from '@/features/sql/import/ImportDialog'
+import { CompareDialog } from '@/features/sql/tools/CompareDialog'
+import { ErDiagramDialog } from '@/features/diagram/ErDiagramDialog'
 import { ExplainDialog } from '@/features/sql/ExplainDialog'
 import { ExportDialog } from '@/features/sql/export/ExportDialog'
 import { LocalHistoryDialog } from '@/features/sql/local-history/LocalHistoryDialog'
@@ -80,6 +82,8 @@ export function AppShell() {
       <ExportDialog />
       <DumpDialog />
       <ExplainDialog />
+      <ErDiagramDialog />
+      <CompareDialog />
       <ImportDialog />
       <ConnectionImportDialog />
       <Notices />

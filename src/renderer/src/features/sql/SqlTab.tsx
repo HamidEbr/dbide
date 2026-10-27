@@ -3,11 +3,10 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Button, EnvBadge, EngineIcon, IconButton, Kbd } from '@/components/ui'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
-import { notify } from '@/state/notices'
 import { useDialogs } from '@/state/dialogs'
 import { useScripts } from '@/state/scripts'
 import type { Tab } from '@/state/workbench'
-import { cancelFromEditor, runFromEditor, setWritable } from './actions'
+import { cancelFromEditor, runFromEditor, setWritable, showQueryPlan } from './actions'
 import { SchemaStatusChip } from './completion/SchemaStatus'
 import { MongoEditor } from './editor/MongoEditor'
 import { SqlEditor } from './editor/SqlEditor'
@@ -183,18 +182,7 @@ export function SqlTab({ tab, active }: { tab: Tab; active: boolean }) {
           </IconButton>
         )}
         {connection.engine === 'mysql' ? (
-          <IconButton
-            label="Show the query plan"
-            onClick={() => {
-              const sql = editorFor(scriptId)?.statements('cursor')[0]
-              if (!sql) return notify('Put the cursor in a statement first.')
-              useDialogs.getState().openExplain({
-                connectionId: connection.id,
-                database: script.database,
-                sql,
-              })
-            }}
-          >
+          <IconButton label="Show the query plan" onClick={() => showQueryPlan(scriptId)}>
             <Gauge size={15} />
           </IconButton>
         ) : null}

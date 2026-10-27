@@ -83,6 +83,8 @@ export interface CoreApi {
       skipped: DbeaverSkipped[]
       /** The saved logins could be read, so passwords can come over. */
       hasCredentials: boolean
+      /** Why the saved logins could not be read: there is no credentials file, or it can't be decrypted. */
+      credentialsProblem: 'missing' | 'unreadable' | null
     }
   }
   /** Brings the chosen connections over from what `connectionImport.scan` read. */
@@ -94,7 +96,11 @@ export interface CoreApi {
       ids: string[]
       passwords: boolean
     }
-    result: { imported: ConnectionSummary[] }
+    result: {
+      imported: ConnectionSummary[]
+      /** Connections that could not be brought over, and why. */
+      failed: { name: string; reason: string }[]
+    }
   }
   'connections.delete': { params: { id: string }; result: void }
   'connections.test': {

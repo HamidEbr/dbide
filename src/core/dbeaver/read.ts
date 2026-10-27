@@ -26,6 +26,8 @@ export interface DbeaverFile {
   logins: Record<string, { connection?: DbeaverLogin; ssh?: DbeaverLogin }>
   /** Whether a credentials file was there to read. */
   hasCredentials: boolean
+  /** Why no logins were read, when there was something to say. */
+  credentialsProblem?: 'missing' | 'unreadable'
 }
 
 /**
@@ -64,14 +66,27 @@ export async function readDbeaver(path: string): Promise<DbeaverFile | null> {
   if (!found) return null
   let logins: DbeaverFile['logins'] = {}
   let hasCredentials = false
+  let credentialsProblem: DbeaverFile['credentialsProblem']
+  let file: Buffer | null = null
   try {
-    const decrypted = decryptCredentials(await readFile(join(dir, 'credentials-config.json')))
+    file = await readFile(join(dir, 'credentials-config.json'))
+  } catch {
+    credentialsProblem = 'missing'
+  }
+  if (file) {
+    const decrypted = decryptCredentials(file)
     if (decrypted) {
       logins = decrypted
       hasCredentials = true
+    } else {
+      credentialsProblem = 'unreadable'
     }
-  } catch {
-    // No saved logins: the connections come over without a user name or a password.
   }
-  return { connections, skipped, logins, hasCredentials }
+  return {
+    connections,
+    skipped,
+    logins,
+    hasCredentials,
+    ...(credentialsProblem ? { credentialsProblem } : {}),
+  }
 }

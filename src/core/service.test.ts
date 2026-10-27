@@ -1595,6 +1595,38 @@ describe('dbeaver import', () => {
     expect(await t.secrets.get(secretKey(second.id, 'password'))).toBeFalsy()
   })
 
+  it('imports the rest when one connection can’t be saved, and drops a Redis database that is not a number', async () => {
+    const file = join(dir, 'data-sources.json')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        connections: {
+          r: {
+            provider: 'redis',
+            driver: 'redis',
+            name: 'Cache',
+            configuration: { database: 'abc' },
+          },
+          m: { provider: 'mysql', driver: 'mysql8', name: 'Shop', configuration: { host: 'db' } },
+        },
+      }),
+    )
+    const t = setup({ files: createFakeFiles({ openPaths: [file] }) })
+    await t.handlers['connectionImport.scan']({ source: 'dbeaver', choose: true }, ctx)
+    const done = await t.handlers['connectionImport.run'](
+      { source: 'dbeaver', path: file, ids: ['r', 'm'], passwords: false },
+      ctx,
+    )
+    expect(done.failed).toEqual([])
+    const saved = await t.handlers['connections.list'](undefined, ctx)
+    expect(saved.map((c) => c.name).sort()).toEqual(['Cache', 'Shop'])
+    const cache = await t.handlers['connections.get'](
+      { id: saved.find((c) => c.name === 'Cache')!.id },
+      ctx,
+    )
+    expect(cache!.config.database).toBeUndefined()
+  })
+
   it('only imports from a file it has read', async () => {
     const t = setup()
     await expect(

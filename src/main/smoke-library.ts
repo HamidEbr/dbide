@@ -469,6 +469,64 @@ export const COMPLETION_1 = wrap(`
     check('and the databases the login can see', names.includes('shop') && names.includes('analytics'), names.join(','))
 `)
 
+/** Pivot, charts and compare on a result: the grid stays, the others read the same rows. */
+export const TOOLS_1 = wrap(`
+    await closeAllSqlTabs()
+    await sidebar('Connections')
+    const id = await runQuery('SELECT customer, total, id FROM shop.orders LIMIT 50;', 'tools')
+    await waitFor(() => vis('.view-switch'), 'the view switch')
+    const view = (name) => byText('.workbench-sql:not([hidden]) .view-switch button', name)
+    check('a result can be shown as a table, a pivot or a chart', ['Table', 'Pivot', 'Chart'].every((n) => view(n)))
+
+    view('Pivot').click()
+    await waitFor(() => vis('table.pivot tbody tr'), 'the pivot')
+    check('the pivot groups the rows by a column and counts or adds them', visAll('table.pivot tbody tr').length > 0 && vis('.tool-controls select'))
+    check('the grid is kept (hidden), so unsaved edits survive', Boolean(vis('.view-pane[hidden] .grid')))
+
+    view('Chart').click()
+    await waitFor(() => vis('svg.chart'), 'the chart')
+    check('the chart draws a bar per group', visAll('svg.chart rect.chart-bar').length > 0, visAll('svg.chart rect.chart-bar').length)
+    const kind = vis('.tool-controls select')
+    kind.value = 'pie'
+    kind.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitFor(() => vis('.chart-pie svg path'), 'the pie')
+    check('and can be a pie, with a legend', visAll('.chart-legend li').length > 0)
+
+    view('Table').click()
+    await waitFor(() => vis('.view-pane:not([hidden]) .grid'), 'the grid again')
+    check('back to the table shows the grid', Boolean(vis('.grid')))
+
+    byText('.workbench-sql:not([hidden]) .result-summary button', 'Keep a copy').click()
+    await waitFor(() => notice(/Copy kept/), 'the copy to be kept')
+    byText('.workbench-sql:not([hidden]) .result-summary button', 'Compare').click()
+    await waitFor(() => document.querySelector('.dialog-compare'), 'the compare dialog')
+    await waitFor(() => document.querySelector('.compare-filter'), 'the comparison against the kept copy')
+    check('a kept copy can be compared with the result it came from, and nothing differs', /Changed 0/.test(document.querySelector('.compare-filter').textContent) && /Same 50/.test(document.querySelector('.compare-filter').textContent), document.querySelector('.compare-filter').textContent)
+    press(document.querySelector('.dialog-compare'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog-compare'), 'the dialog to close')
+`)
+
+/** The diagram of a database: its tables as boxes, the foreign keys as lines, and a click to follow one. */
+export const DIAGRAM_1 = wrap(`
+    ui.useDialogs.getState().openDiagram({ connectionId: 'sql-dev', database: 'shop' })
+    await waitFor(() => document.querySelector('.diagram .diagram-table'), 'the diagram')
+    await waitFor(() => document.querySelector('.diagram-link'), 'the relations')
+    const boxes = () => all('.diagram .diagram-table').map((g) => g.querySelector('.diagram-name').textContent)
+    check('every table of the database is a box, views marked', ['orders', 'customers', 'products'].every((n) => boxes().includes(n)) && boxes().some((n) => /open_orders [(]view[)]/.test(n)), boxes().join(', '))
+    check('the foreign key between orders and customers is a line', all('.diagram-link').some((l) => /orders[.]customer .* customers[.]name/.test(l.textContent)), all('.diagram-link').map((l) => l.textContent).join(' | '))
+    check('a box lists its columns with their types', all('.diagram-table').some((g) => g.textContent.includes('customer') && g.textContent.includes('varchar')))
+    const orders = all('.diagram .diagram-table').find((g) => g.querySelector('.diagram-name').textContent === 'orders')
+    orders.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitFor(() => document.querySelector('.diagram-table.selected'), 'the selection')
+    check('clicking a table dims the ones it has nothing to do with', all('.diagram-table.dim').length > 0 && document.querySelector('.diagram-link.hot'))
+    const filter = document.querySelector('.diagram-bar input[aria-label="Filter tables"]')
+    setValue(filter, 'cust')
+    await waitFor(() => boxes().length === 1, 'the filter to narrow the tables')
+    check('the filter narrows the diagram', boxes()[0] === 'customers', boxes().join(','))
+    press(document.querySelector('.dialog-diagram'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog-diagram'), 'the dialog to close')
+`)
+
 /** A result with 300 columns: only the ones on screen are drawn, and the rest are one key away. */
 export const GRID_WIDE = wrap(`
     await sidebar('Connections')
