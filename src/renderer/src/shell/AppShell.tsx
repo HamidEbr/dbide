@@ -4,9 +4,13 @@ import { Notices } from '@/components/Notices'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { Inspector } from '@/features/inspector/Inspector'
 import { DumpDialog } from '@/features/sql/export/DumpDialog'
+import { ParametersDialog } from '@/features/sql/ParametersDialog'
 import { ConnectionImportDialog } from '@/features/connections/ConnectionImportDialog'
 import { ImportDialog } from '@/features/sql/import/ImportDialog'
 import { CompareDialog } from '@/features/sql/tools/CompareDialog'
+import { QueryBuilderDialog } from '@/features/sql/builder/QueryBuilderDialog'
+import { TableDesignerDialog } from '@/features/schema/TableDesignerDialog'
+import { SchemaCompareDialog } from '@/features/schema/SchemaCompareDialog'
 import { ErDiagramDialog } from '@/features/diagram/ErDiagramDialog'
 import { ExplainDialog } from '@/features/sql/ExplainDialog'
 import { ExportDialog } from '@/features/sql/export/ExportDialog'
@@ -83,9 +87,13 @@ export function AppShell() {
       <DumpDialog />
       <ExplainDialog />
       <ErDiagramDialog />
+      <SchemaCompareDialog />
+      <TableDesignerDialog />
+      <QueryBuilderDialog />
       <CompareDialog />
       <ImportDialog />
       <ConnectionImportDialog />
+      <ParametersDialog />
       <Notices />
     </div>
   )

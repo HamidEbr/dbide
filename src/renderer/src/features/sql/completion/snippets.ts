@@ -5,6 +5,7 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
+import type { SqlDialect } from '@shared/dialect'
 import { analyzeSql } from '@shared/sql-context'
 import { allSnippets, type Snippet, type SnippetEngine } from '@shared/snippets'
 import { useData } from '@/state/data'
@@ -22,12 +23,15 @@ const asOption = (snippet: Snippet): Completion =>
  * Snippets in the editor's popup, offered where a statement begins or a keyword goes, never where a name is
  * being typed or inside a string.
  */
-export function snippetSource(engine: SnippetEngine): CompletionSource {
+export function snippetSource(
+  engine: SnippetEngine,
+  dialect: () => SqlDialect = () => 'mysql',
+): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const word = context.matchBefore(/[A-Za-z_]\w*/)
     if (!word || (word.from === word.to && !context.explicit)) return null
     if (engine === 'sql') {
-      const analysis = analyzeSql(context.state.doc.toString(), context.pos)
+      const analysis = analyzeSql(context.state.doc.toString(), context.pos, dialect())
       if (analysis.kind !== 'keyword') return null
     } else {
       // A shell script: only at the start of a line, where a statement begins.

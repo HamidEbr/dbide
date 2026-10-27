@@ -25,6 +25,7 @@ import { useRowEditing } from '../edit/useRowEditing'
 import { createScript } from '../scripts'
 import { clearActiveGrid, setActiveGrid, type GridHandle } from './active-grid'
 import { formatCopy, type CopyFormat } from './copy'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
 import { buildLookup, describeLink, type FkLink } from './foreign-keys'
 import { columnWidth, displayCell } from './format'
 import { useForeignKeys } from './useForeignKeys'
@@ -71,6 +72,11 @@ export function ResultGrid({ resultSet, scriptId, statement, active }: ResultGri
   // Re-render when a batch lands. The rows themselves are read straight from the store.
   const version = useSyncExternalStore(store.subscribe, store.getVersion)
   const editing = useRowEditing(scriptId, resultSet, statement)
+  const sourceConnectionId = useScripts((state) => state.scripts[scriptId]?.connectionId ?? '')
+  const dialect: SqlDialect = useData((state) => {
+    const engine = state.connections.find((c) => c.id === sourceConnectionId)?.engine
+    return (engine && dialectOf(engine)) || 'mysql'
+  })
   const totalRows = editing.totalRows
 
   const scroller = useRef<HTMLDivElement>(null)
@@ -208,7 +214,14 @@ export function ResultGrid({ resultSet, scriptId, statement, active }: ResultGri
         { length: selection.c2 - selection.c1 + 1 },
         (_, i) => selection.c1 + i,
       )
-      const result = generateStatements(kind, editing.table, columns, picked, columnsPicked)
+      const result = generateStatements(
+        kind,
+        editing.table,
+        columns,
+        picked,
+        columnsPicked,
+        dialect,
+      )
       if (!result.ok) return notify(result.message)
       void writeClipboard(result.statements.join('\n')).then(() =>
         notify(
@@ -216,7 +229,7 @@ export function ResultGrid({ resultSet, scriptId, statement, active }: ResultGri
         ),
       )
     },
-    [selection, editing, columns],
+    [selection, editing, columns, dialect],
   )
 
   // ───────── foreign keys ─────────
@@ -232,7 +245,7 @@ export function ResultGrid({ resultSet, scriptId, statement, active }: ResultGri
   const followLink = useCallback(
     (link: FkLink, row: number): void => {
       const cells = editing.effectiveRow(row)?.cells
-      const lookup = cells ? buildLookup(link, columns, cells) : null
+      const lookup = cells ? buildLookup(link, columns, cells, 1000, dialect) : null
       if (!lookup) return notify('That value is NULL, so it doesn’t point at any row.')
       createScript({
         connectionId,
@@ -242,7 +255,7 @@ export function ResultGrid({ resultSet, scriptId, statement, active }: ResultGri
         run: true,
       })
     },
-    [editing, columns, connectionId],
+    [editing, columns, connectionId, dialect],
   )
 
   const follow = useCallback(

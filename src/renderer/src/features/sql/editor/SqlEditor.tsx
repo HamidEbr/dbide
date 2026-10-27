@@ -6,7 +6,7 @@ import {
   completionKeymap,
 } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { keywordCompletionSource, MySQL, sql } from '@codemirror/lang-sql'
+import { keywordCompletionSource, MSSQL, MySQL, PostgreSQL, sql } from '@codemirror/lang-sql'
 import { bracketMatching, indentOnInput } from '@codemirror/language'
 import { searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState } from '@codemirror/state'
@@ -21,6 +21,7 @@ import {
 } from '@codemirror/view'
 import { useEffect, useMemo, useRef } from 'react'
 import { splitStatements, statementAt } from '@shared/sql'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
 import { analyzeSql } from '@shared/sql-context'
 import { formatShortcut } from '@/commands/keybinding'
 import { notify } from '@/state/notices'
@@ -32,20 +33,42 @@ import { snippetSource } from '../completion/snippets'
 import { sqlCompletionSource } from '../completion/source'
 import { editorTheme } from './theme'
 
-const mysql = () => sql({ dialect: MySQL, upperCaseKeywords: false })
+const CM_DIALECTS = { mysql: MySQL, postgresql: PostgreSQL, mssql: MSSQL } as const
+const sqlLanguage = (dialect: SqlDialect) =>
+  sql({ dialect: CM_DIALECTS[dialect], upperCaseKeywords: false })
 
-const upperKeywords = keywordCompletionSource(MySQL, true)
-const lowerKeywords = keywordCompletionSource(MySQL, false)
+const keywordSources = Object.fromEntries(
+  (Object.keys(CM_DIALECTS) as SqlDialect[]).map((d) => [
+    d,
+    {
+      upper: keywordCompletionSource(CM_DIALECTS[d], true),
+      lower: keywordCompletionSource(CM_DIALECTS[d], false),
+    },
+  ]),
+) as Record<SqlDialect, { upper: CompletionSource; lower: CompletionSource }>
+
+/** The formatter's name for each server's SQL. */
+const FORMATTER_LANGUAGE: Record<SqlDialect, 'mysql' | 'postgresql' | 'transactsql'> = {
+  mysql: 'mysql',
+  postgresql: 'postgresql',
+  mssql: 'transactsql',
+}
 
 /** Keywords and functions where they belong: not where a table or a database is being named. */
-const keywordSource: CompletionSource = (context) => {
-  const analysis = analyzeSql(context.state.doc.toString(), context.pos)
-  if (analysis.kind === 'none' || analysis.kind === 'table' || analysis.kind === 'database') {
-    return null
+const keywordSourceFor =
+  (dialect: () => SqlDialect): CompletionSource =>
+  (context) => {
+    const d = dialect()
+    const analysis = analyzeSql(context.state.doc.toString(), context.pos, d)
+    if (analysis.kind === 'none' || analysis.kind === 'table' || analysis.kind === 'database') {
+      return null
+    }
+    if (analysis.kind === 'column' && analysis.qualifier !== null) return null
+    const sources = keywordSources[d]
+    return (useData.getState().settings.sqlUppercaseKeywords ? sources.upper : sources.lower)(
+      context,
+    )
   }
-  if (analysis.kind === 'column' && analysis.qualifier !== null) return null
-  return (useData.getState().settings.sqlUppercaseKeywords ? upperKeywords : lowerKeywords)(context)
-}
 
 interface SqlEditorProps {
   scriptId: string
@@ -60,13 +83,16 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
   const viewRef = useRef<EditorView | null>(null)
   const language = useMemo(() => new Compartment(), [])
   // The editor is built once per script; the database it asks about can change underneath it.
-  const live = useRef({ database })
+  const engine = useData((state) => state.connections.find((c) => c.id === connectionId)?.engine)
+  const dialect: SqlDialect = (engine && dialectOf(engine)) || 'mysql'
+  const live = useRef({ database, dialect })
   useEffect(() => {
-    live.current = { database }
+    live.current = { database, dialect }
+    viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(dialect)) })
     // Read the names now, so the first suggestion doesn't wait for the server.
     if (database) void schemaCache.detail(connectionId, database)
     void schemaCache.databases(connectionId)
-  }, [connectionId, database])
+  }, [connectionId, database, dialect, language])
   useEffect(() => {
     const parent = host.current
     if (!parent) return
@@ -100,12 +126,13 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
                 database: () => live.current.database,
                 cache: schemaCache,
                 fullPaths: () => useData.getState().settings.sqlFullPaths,
+                dialect: () => live.current.dialect,
               }),
-              snippetSource('sql'),
-              keywordSource,
+              snippetSource('sql', () => live.current.dialect),
+              keywordSourceFor(() => live.current.dialect),
             ],
           }),
-          language.of(mysql()),
+          language.of(sqlLanguage(live.current.dialect)),
           placeholder(
             `Write SQL. ${run} runs the statement under the cursor, ${runAll} runs the script.`,
           ),
@@ -130,14 +157,15 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
     const unregister = registerEditor(scriptId, {
       statements(mode) {
         const doc = view.state.doc.toString()
-        if (mode === 'all') return splitStatements(doc).map((s) => s.text)
+        const d = live.current.dialect
+        if (mode === 'all') return splitStatements(doc, d).map((s) => s.text)
         const selection = view.state.selection.main
         if (!selection.empty) {
-          return splitStatements(view.state.sliceDoc(selection.from, selection.to)).map(
+          return splitStatements(view.state.sliceDoc(selection.from, selection.to), d).map(
             (s) => s.text,
           )
         }
-        const statement = statementAt(splitStatements(doc), selection.head)
+        const statement = statementAt(splitStatements(doc, d), selection.head)
         return statement ? [statement.text] : []
       },
 
@@ -148,7 +176,7 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
         const to = selection.empty ? view.state.doc.length : selection.to
         try {
           const formatted = format(view.state.sliceDoc(from, to), {
-            language: 'mysql',
+            language: FORMATTER_LANGUAGE[live.current.dialect],
             keywordCase: 'upper',
             tabWidth: 2,
             linesBetweenQueries: 1,

@@ -1,9 +1,11 @@
 import { CircleCheck, FileUp, LoaderCircle, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CoreEvents, type ImportProgress } from '@shared/api'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
 import { ENVIRONMENT_POLICIES } from '@shared/environment'
 import {
   formatOfFile,
+  typeFor,
   tableNameOfFile,
   type ImportDelimiter,
   type ImportFormat,
@@ -40,6 +42,7 @@ function ImportBody({ request }: { request: ImportRequest }) {
   const connection = useData((state) =>
     state.connections.find((c) => c.id === request.connectionId),
   )
+  const dialect: SqlDialect = (connection && dialectOf(connection.engine)) || 'mysql'
   const protectedConnection = connection
     ? ENVIRONMENT_POLICIES[connection.environment].readOnlyByDefault
     : false
@@ -83,7 +86,13 @@ function ImportBody({ request }: { request: ImportRequest }) {
     try {
       const result = await coreLink.call('import.preview', { path, source: next })
       setPreview(result)
-      setCreated(result.columns.map((name, i) => ({ name, type: result.types[i]!, use: true })))
+      setCreated(
+        result.columns.map((name, i) => ({
+          name,
+          type: typeFor(result.types[i]!, dialect),
+          use: true,
+        })),
+      )
       setPhase('options')
     } catch (e) {
       setPreview(null)
@@ -462,7 +471,7 @@ function ImportBody({ request }: { request: ImportRequest }) {
                       />
                       <span>Empty values become NULL</span>
                     </label>
-                    {isNew ? null : (
+                    {isNew || dialect === 'mssql' ? null : (
                       <label className="check">
                         <input
                           type="checkbox"

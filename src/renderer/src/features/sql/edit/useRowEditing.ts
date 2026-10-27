@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
 import {
   buildEditStatements,
   singleSourceTable,
@@ -95,6 +96,7 @@ export function useRowEditing(
   const connection = useData((state) =>
     state.connections.find((c) => c.id === script?.connectionId),
   )
+  const dialect: SqlDialect = (connection && dialectOf(connection.engine)) || 'mysql'
   const changeSet = useEdits((state) => state.sets[resultSet.id]) ?? NO_CHANGES
   const [committing, setCommitting] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -255,8 +257,10 @@ export function useRowEditing(
   const preview = useMemo((): string[] => {
     if (availability.status !== 'ready' || countChanges(changeSet) === 0) return []
     const batch = toEditBatch(changeSet, { columns, table: availability.table })
-    return buildEditStatements(batch, columnTypes(availability.table)).map((s) => s.preview)
-  }, [availability, changeSet, columns])
+    return buildEditStatements(batch, columnTypes(availability.table), dialect).map(
+      (s) => s.preview,
+    )
+  }, [availability, changeSet, columns, dialect])
 
   const commit = useCallback(async (): Promise<boolean> => {
     if (availability.status !== 'ready' || !script || !connection || committing) return false

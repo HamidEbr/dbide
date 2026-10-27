@@ -1,5 +1,6 @@
 import { ENVIRONMENT_POLICIES } from '@shared/environment'
 import { collectionRef } from '@shared/mongo/documents'
+import { dialectOf, selectRows, type SqlDialect } from '@shared/dialect'
 import { scriptLanguageOf, type ScriptInfo } from '@shared/scripts'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
@@ -64,16 +65,24 @@ export function createScript(options: NewScript): string | null {
   if (options.run) {
     void requestRun(
       id,
-      statementsOf(scriptLanguageOf(connection.engine), text).map((s) => s.text),
+      statementsOf(
+        scriptLanguageOf(connection.engine),
+        text,
+        dialectOf(connection.engine) ?? 'mysql',
+      ).map((s) => s.text),
     )
   }
   return id
 }
 
 /** `SELECT *` from a table with a row limit, quoted safely. */
-export function selectAllSql(database: string, table: string, limit = 1000): string {
-  const quote = (name: string): string => `\`${name.replace(/`/g, '``')}\``
-  return `SELECT * FROM ${quote(database)}.${quote(table)} LIMIT ${limit};`
+export function selectAllSql(
+  database: string,
+  table: string,
+  limit = 1000,
+  dialect: SqlDialect = 'mysql',
+): string {
+  return selectRows(dialect, database, table, limit)
 }
 
 /** The first documents of a collection, as a script that runs at once. */

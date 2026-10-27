@@ -1,5 +1,6 @@
 import type { ColumnInfo } from './driver'
 import type { Cell } from './query'
+import { dialectInfo, type SqlDialect } from './dialect'
 import { sqlLiteral } from './value'
 
 /** What the server says about one column of a table, beyond what a result carries. */
@@ -77,13 +78,16 @@ export type EditResult =
 
 export const MAX_CHANGES_PER_BATCH = 5000
 
-const quote = (name: string): string => `\`${name.replace(/`/g, '``')}\``
-
-function inline(sql: string, params: Cell[], types: (string | undefined)[]): string {
+function inline(
+  sql: string,
+  params: Cell[],
+  types: (string | undefined)[],
+  dialect: SqlDialect,
+): string {
   let index = 0
   return sql.replace(/\?/g, () => {
     const at = index++
-    return sqlLiteral(params[at], types[at])
+    return sqlLiteral(params[at], types[at], dialect)
   })
 }
 
@@ -95,8 +99,10 @@ function inline(sql: string, params: Cell[], types: (string | undefined)[]): str
 export function buildEditStatements(
   batch: EditBatch,
   columnTypes: Record<string, string>,
+  dialect: SqlDialect = 'mysql',
 ): EditStatement[] {
-  const table = `${quote(batch.schema)}.${quote(batch.table)}`
+  const quote = dialectInfo(dialect).quote
+  const table = dialectInfo(dialect).qualified(batch.schema, batch.table)
 
   const where = (
     key: Record<string, Cell>,
@@ -118,7 +124,7 @@ export function buildEditStatements(
       const sql = `UPDATE ${table} SET ${names.map((n) => `${quote(n)} = ?`).join(', ')} WHERE ${condition.sql}`
       const params = [...names.map((n) => change.values[n] as Cell), ...condition.params]
       const types = [...names.map((n) => columnTypes[n]), ...condition.types]
-      return { kind: 'update', sql, params, preview: inline(sql, params, types) }
+      return { kind: 'update', sql, params, preview: inline(sql, params, types, dialect) }
     }
     if (change.kind === 'delete') {
       const condition = where(change.key)
@@ -127,13 +133,15 @@ export function buildEditStatements(
         kind: 'delete',
         sql,
         params: condition.params,
-        preview: inline(sql, condition.params, condition.types),
+        preview: inline(sql, condition.params, condition.types, dialect),
       }
     }
     const names = Object.keys(change.values)
     const sql =
       names.length === 0
-        ? `INSERT INTO ${table} () VALUES ()`
+        ? dialect === 'mysql'
+          ? `INSERT INTO ${table} () VALUES ()`
+          : `INSERT INTO ${table} DEFAULT VALUES`
         : `INSERT INTO ${table} (${names.map(quote).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`
     const params = names.map((n) => change.values[n] as Cell)
     return {
@@ -144,6 +152,7 @@ export function buildEditStatements(
         sql,
         params,
         names.map((n) => columnTypes[n]),
+        dialect,
       ),
     }
   })

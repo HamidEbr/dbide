@@ -13,7 +13,7 @@ export const isSystemSchema = (name: string): boolean => SYSTEM_SCHEMAS.has(name
  */
 export const nodeId = (...parts: string[]): string => JSON.stringify(parts)
 
-function parseId(id: string): string[] {
+export function parseId(id: string): string[] {
   try {
     const parts: unknown = JSON.parse(id)
     if (Array.isArray(parts) && parts.every((p) => typeof p === 'string')) return parts as string[]

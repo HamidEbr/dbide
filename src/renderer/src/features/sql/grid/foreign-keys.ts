@@ -1,6 +1,7 @@
 import type { ColumnInfo } from '@shared/driver'
 import type { TableDescription } from '@shared/edit'
 import type { Cell } from '@shared/query'
+import { dialectInfo, type SqlDialect } from '@shared/dialect'
 import { sqlLiteral } from '@shared/value'
 
 /** A way to jump from a row to related rows, along a foreign key. */
@@ -17,8 +18,6 @@ export interface FkLink {
 }
 
 const tableId = (schema: string, table: string): string => `${schema}\u0000${table}`
-
-const quote = (name: string): string => `\`${name.replace(/`/g, '``')}\``
 
 /**
  * Every link a result offers, grouped by the column it hangs on. A key that spans several columns
@@ -92,15 +91,24 @@ export function buildLookup(
   columns: readonly ColumnInfo[],
   row: readonly (Cell | undefined)[],
   limit = 1000,
+  dialect: SqlDialect = 'mysql',
 ): Lookup | null {
+  const quote = dialectInfo(dialect).quote
   const conditions: string[] = []
   for (const [i, index] of link.columnIndexes.entries()) {
     const value = row[index]
     if (value === null || value === undefined) return null
-    conditions.push(`${quote(link.targetColumns[i]!)} = ${sqlLiteral(value, columns[index]?.type)}`)
+    conditions.push(
+      `${quote(link.targetColumns[i]!)} = ${sqlLiteral(value, columns[index]?.type, dialect)}`,
+    )
   }
+  const from = dialectInfo(dialect).qualified(link.targetSchema, link.targetTable)
+  const where = conditions.join(' AND ')
   return {
-    sql: `SELECT * FROM ${quote(link.targetSchema)}.${quote(link.targetTable)} WHERE ${conditions.join(' AND ')} LIMIT ${limit};`,
+    sql:
+      dialect === 'mssql'
+        ? `SELECT TOP (${limit}) * FROM ${from} WHERE ${where};`
+        : `SELECT * FROM ${from} WHERE ${where} LIMIT ${limit};`,
     title: link.targetTable,
     database: link.targetSchema,
   }

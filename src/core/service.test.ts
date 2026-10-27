@@ -1740,3 +1740,86 @@ describe('data import', () => {
     })
   })
 })
+
+describe('schema changes', () => {
+  function ddlSetup(failOn?: RegExp) {
+    const seen: { sql: string; readOnly: boolean | undefined; target?: string }[] = []
+    const driver = fakeDriver('mysql', (context) =>
+      Promise.resolve(
+        fakeSession({
+          async *execute(request): AsyncGenerator<ResultBatch> {
+            seen.push({ sql: request.text, readOnly: context.readOnly, target: request.target })
+            if (failOn?.test(request.text))
+              throw Object.assign(new Error('Duplicate column name'), { code: 'ER_DUP_FIELDNAME' })
+            yield { kind: 'ok', affectedRows: 0, insertId: null, message: '', warnings: 0 }
+          },
+        }),
+      ),
+    )
+    const t = setup({ drivers: new DriverRegistry([driver]) })
+    return { ...t, seen }
+  }
+  const save = (t: ReturnType<typeof ddlSetup>, environment: 'dev' | 'prod' = 'dev') =>
+    t.handlers['connections.save'](
+      { config: { ...newConnectionDraft('mysql', 'm1'), name: 'Shop', environment } },
+      ctx,
+    )
+  const run = (statements: string[], overrides = {}) => ({
+    connectionId: 'm1',
+    database: 'shop',
+    statements,
+    confirmed: false,
+    ...overrides,
+  })
+
+  it('runs schema changes in order on a connection that can write', async () => {
+    const t = ddlSetup()
+    await save(t)
+    const done = await t.handlers['ddl.run'](
+      run(['ALTER TABLE t ADD COLUMN a int;', 'ALTER TABLE t DROP COLUMN b']),
+      ctx,
+    )
+    expect(done).toEqual({ ran: 2 })
+    expect(t.seen).toEqual([
+      { sql: 'ALTER TABLE t ADD COLUMN a int', readOnly: false, target: 'shop' },
+      { sql: 'ALTER TABLE t DROP COLUMN b', readOnly: false, target: 'shop' },
+    ])
+  })
+
+  it('refuses what is not a schema change, a whole database, and a production connection that is not confirmed', async () => {
+    const t = ddlSetup()
+    await save(t)
+    for (const sql of [
+      'DELETE FROM t',
+      'SELECT 1',
+      'DROP DATABASE shop',
+      'ALTER TABLE a ADD b int; DROP TABLE c',
+    ]) {
+      await expect(t.handlers['ddl.run'](run([sql]), ctx)).rejects.toBeTruthy()
+    }
+    expect(t.seen).toEqual([])
+    const prod = ddlSetup()
+    await save(prod, 'prod')
+    await expect(prod.handlers['ddl.run'](run(['DROP TABLE t']), ctx)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await expect(
+      prod.handlers['ddl.run'](run(['DROP TABLE t'], { confirmed: true }), ctx),
+    ).resolves.toEqual({ ran: 1 })
+  })
+
+  it('stops at the first change that fails and says how many were made', async () => {
+    const t = ddlSetup(/DROP/)
+    await save(t)
+    await expect(
+      t.handlers['ddl.run'](
+        run(['ALTER TABLE t ADD a int', 'ALTER TABLE t DROP COLUMN b', 'ALTER TABLE t ADD c int']),
+        ctx,
+      ),
+    ).rejects.toMatchObject({
+      code: 'ER_DUP_FIELDNAME',
+      message: expect.stringContaining('1 of 3 changes'),
+    })
+    expect(t.seen).toHaveLength(2)
+  })
+})

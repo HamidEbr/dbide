@@ -78,9 +78,20 @@ const unescapeXml = (text: string): string =>
 
 const DEFAULT_PORTS: Record<EngineKind, number> = {
   mysql: 3306,
+  postgresql: 5432,
+  mssql: 1433,
   mongodb: 27017,
   redis: 6379,
   rabbitmq: 5672,
+}
+
+const ENGINE_LABEL: Record<EngineKind, string> = {
+  mysql: 'MySQL',
+  postgresql: 'PostgreSQL',
+  mssql: 'SQL Server',
+  mongodb: 'MongoDB',
+  redis: 'Redis',
+  rabbitmq: 'RabbitMQ',
 }
 
 function connection(
@@ -207,6 +218,9 @@ function attributes(tag: string): Record<string, string> {
 const NAVICAT_ENGINES: Record<string, EngineKind> = {
   MYSQL: 'mysql',
   MARIADB: 'mysql',
+  POSTGRESQL: 'postgresql',
+  SQLSERVER: 'mssql',
+  MSSQL: 'mssql',
   MONGODB: 'mongodb',
   REDIS: 'redis',
 }
@@ -291,7 +305,7 @@ export function parseUrlList(text: string): ParsedSource {
     connections.push(
       connection({
         sourceId,
-        name: `${parsed.engine === 'mysql' ? 'MySQL' : parsed.engine === 'mongodb' ? 'MongoDB' : 'Redis'} ${parsed.host}`,
+        name: `${ENGINE_LABEL[parsed.engine]} ${parsed.host}`,
         engine: parsed.engine,
         host: parsed.host,
         port: parsed.port,

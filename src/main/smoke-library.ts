@@ -527,6 +527,107 @@ export const DIAGRAM_1 = wrap(`
     await waitFor(() => !document.querySelector('.dialog-diagram'), 'the dialog to close')
 `)
 
+/** Comparing two schemas: what is missing in the target, and the script that adds it. */
+export const SCHEMA_COMPARE_1 = wrap(`
+    ui.useDialogs.getState().openSchemaCompare({ connectionId: 'sql-dev', database: 'shop' })
+    await waitFor(() => document.querySelector('.dialog-compare select option[value="analytics"]'), 'the target schemas')
+    const target = [...document.querySelectorAll('.dialog-compare select')].find((s) => [...s.options].some((o) => o.value === 'analytics'))
+    target.value = 'analytics'
+    target.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitFor(() => byText('.dialog-compare button', 'Compare') && !byText('.dialog-compare button', 'Compare').disabled, 'the Compare button')
+    byText('.dialog-compare button', 'Compare').click()
+    await waitFor(() => document.querySelector('.dialog-compare table.pivot tr'), 'the differences')
+    const rows = all('.dialog-compare table.pivot tr').map((r) => r.textContent)
+    check('a table only the source has is listed as one to add', rows.some((t) => /Add table/.test(t) && /orders/.test(t)), rows.join(' | '))
+    check('a change that removes data starts unticked', all('.dialog-compare tr.compare-removed input').every((i) => !i.checked) && all('.dialog-compare tbody tr:not(.compare-removed) input').every((i) => i.checked || i.disabled))
+    const script = document.querySelector('.dialog-compare .export-sql').textContent
+    check('the script creates the missing table, in the target schema', script.includes('CREATE TABLE ' + String.fromCharCode(96) + 'analytics' + String.fromCharCode(96) + '.' + String.fromCharCode(96) + 'orders' + String.fromCharCode(96)) && !script.includes('DROP TABLE'), script.slice(0, 200))
+    press(document.querySelector('.dialog-compare'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog-compare'), 'the dialog to close')
+`)
+
+/** The columns of a table to look at and change, with the SQL they make shown before anything runs. */
+export const DESIGNER_1 = wrap(`
+    ui.useDialogs.getState().openTableDesigner({ connectionId: 'sql-dev', schema: 'shop', table: 'orders' })
+    await waitFor(() => document.querySelector('.dialog-designer table.pivot tbody tr'), 'the columns')
+    const names = () => all('.dialog-designer table.pivot tbody tr').map((r) => r.querySelector('input').value)
+    check('every column of the table is listed, with its name in an input', names().includes('id') && names().includes('customer') && names().includes('total'), names().join(','))
+    check('nothing is applied until something changes', byText('.dialog-designer footer button', 'Apply').disabled)
+    const typeInput = document.querySelector('.dialog-designer input[aria-label="Type of customer"]')
+    setValue(typeInput, 'varchar(300)')
+    await waitFor(() => document.querySelector('.dialog-designer .export-sql'), 'the SQL')
+    const sql = document.querySelector('.dialog-designer .export-sql').textContent
+    check('changing a type shows the ALTER it makes', sql.includes('MODIFY COLUMN') && sql.includes('varchar(300)'), sql)
+    check('and the change can be applied', !byText('.dialog-designer footer button', 'Apply').disabled)
+    byText('.dialog-designer button', 'Add a column').click()
+    await waitFor(() => names().length > 3 && names().includes(''), 'the new row')
+    check('a new column with no name is not applied', byText('.dialog-designer footer button', 'Apply').disabled && /needs a name/.test(document.querySelector('.dialog-designer .export-sql').textContent))
+    const drop = byText('.dialog-designer button', 'Drop table')
+    check('dropping the table needs its name typed first', drop.disabled)
+    press(document.querySelector('.dialog-designer'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog-designer'), 'the dialog to close')
+`)
+
+/** A script with :parameters asks for their values, writes them in as literals, and remembers them. */
+export const PARAMS_1 = wrap(`
+    await closeAllSqlTabs()
+    await sidebar('Connections')
+    const id = ui.createScript({ connectionId: 'sql-dev', database: 'shop', text: 'SELECT * FROM shop.orders WHERE id > :min AND customer <> :who LIMIT 3;', name: 'params', run: true })
+    await waitFor(() => document.querySelector('.dialog[aria-labelledby="params-title"]'), 'the parameters dialog')
+    const names = all('.params-row .mono:first-child').map((e) => e.textContent)
+    check('every parameter of the script is asked for, once', names.join(',') === ':min,:who', names.join(','))
+    const kind = document.querySelector('select[aria-label="Kind of :min"]')
+    kind.value = 'number'
+    kind.dispatchEvent(new Event('change', { bubbles: true }))
+    setValue(document.querySelector('input[aria-label="Value of :min"]'), 'abc')
+    await waitFor(() => /should be a number/.test(document.querySelector('.dialog[aria-labelledby="params-title"]').textContent), 'the number check')
+    check('a number that is not one cannot be run', byText('.dialog[aria-labelledby="params-title"] button', 'Run').disabled)
+    setValue(document.querySelector('input[aria-label="Value of :min"]'), '0')
+    setValue(document.querySelector('input[aria-label="Value of :who"]'), "O'Neil")
+    await waitFor(() => !byText('.dialog[aria-labelledby="params-title"] button', 'Run').disabled, 'Run to be enabled')
+    byText('.dialog[aria-labelledby="params-title"] button', 'Run').click()
+    await waitFor(() => !document.querySelector('.dialog[aria-labelledby="params-title"]'), 'the dialog to close')
+    await waitFor(() => { const st = ui.useScripts.getState().scripts[id].run; return st && st.statements[0] && st.statements[0].status !== 'queued' && st.statements[0].status !== 'running' }, 'the run')
+    const sql = ui.useScripts.getState().scripts[id].run.statements[0].sql
+    check('the statement that ran has the values written in as literals', sql.includes('id > 0') && sql.includes("customer <> 'O''Neil'") && !sql.includes(':min'), sql)
+    ui.createScript({ connectionId: 'sql-dev', database: 'shop', text: 'SELECT :min AS a;', name: 'params again', run: true })
+    await waitFor(() => document.querySelector('.dialog[aria-labelledby="params-title"]'), 'the dialog again')
+    check('the values used last time are there for the next run', document.querySelector('input[aria-label="Value of :min"]').value !== undefined)
+    press(document.querySelector('.dialog[aria-labelledby="params-title"]'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog[aria-labelledby="params-title"]'), 'the dialog to close')
+`)
+
+/** The query builder: tables, the join a foreign key suggests, columns, a condition, and the SQL they make. */
+export const BUILDER_1 = wrap(`
+    const BT = String.fromCharCode(96)
+    ui.useDialogs.getState().openQueryBuilder({ connectionId: 'sql-dev', database: 'shop' })
+    await waitFor(() => document.querySelector('.builder-tables li button'), 'the table list')
+    const addTable = async (name) => {
+      byText('.builder-tables li button', name).click()
+      await waitFor(() => all('.builder-table strong').some((e) => e.textContent === name), name + ' to be added')
+    }
+    const flat = () => document.querySelector('.builder-sql').textContent.split(NL).join(' ')
+    await addTable('orders')
+    check('the first table starts a SELECT with a short alias', flat().includes('FROM ' + BT + 'shop' + BT + '.' + BT + 'orders' + BT + ' ' + BT + 'o' + BT), flat())
+    await addTable('customers')
+    await waitFor(() => flat().includes('JOIN'), 'the join')
+    check('a second table joins on the foreign key between them', flat().includes('JOIN ' + BT + 'shop' + BT + '.' + BT + 'customers' + BT) && flat().includes(' ON ') && flat().includes(BT + 'customer' + BT), flat())
+    const nameBox = all('.builder-columns .check').find((l) => l.textContent.startsWith('name'))
+    nameBox.querySelector('input').click()
+    await waitFor(() => flat().includes(BT + 'name' + BT), 'the column')
+    byText('.dialog-builder button', 'Add a condition').click()
+    await waitFor(() => document.querySelector('select[aria-label="Kind of value"]'), 'the condition row')
+    const kind = document.querySelector('select[aria-label="Kind of value"]')
+    kind.value = 'parameter'
+    kind.dispatchEvent(new Event('change', { bubbles: true }))
+    setValue(document.querySelector('input[aria-label="Filter value"]'), 'who')
+    await waitFor(() => flat().includes(':who'), 'the parameter in the SQL')
+    check('a condition can ask for its value when run, as a :parameter', flat().includes('WHERE') && flat().includes('= :who'), flat())
+    check('a limit is written in', flat().includes('LIMIT 100;'), flat())
+    press(document.querySelector('.dialog-builder'), 'Escape')
+    await waitFor(() => !document.querySelector('.dialog-builder'), 'the dialog to close')
+`)
+
 /** A result with 300 columns: only the ones on screen are drawn, and the rest are one key away. */
 export const GRID_WIDE = wrap(`
     await sidebar('Connections')

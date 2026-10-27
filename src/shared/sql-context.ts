@@ -1,4 +1,5 @@
-import { insideLiteral, maskLiterals, splitStatements } from './sql'
+import type { SqlDialect } from './dialect'
+import { insideLiteral, maskLiterals, normalizeSql, splitStatements } from './sql'
 
 /**
  * What belongs at the cursor of a SQL script: a table, a column of the tables the statement reads, a database,
@@ -232,7 +233,13 @@ const TABLE_MODIFIERS = new Set([
   'LATERAL',
 ])
 
-export function analyzeSql(script: string, offset: number): SqlContext {
+export function analyzeSql(
+  original: string,
+  offset: number,
+  dialect: SqlDialect = 'mysql',
+): SqlContext {
+  // Another server's quotes and comments are rewritten into MySQL's, with every offset where it was.
+  const script = normalizeSql(original, dialect)
   if (insideLiteral(script, offset)) return { kind: 'none' }
 
   // The statement the cursor is in: the last one that starts before it, unless a `;` came in between, which starts

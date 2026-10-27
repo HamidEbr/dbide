@@ -1,5 +1,16 @@
-import { AlignLeft, Gauge, History, ListVideo, Lock, LockOpen, Play, Square } from 'lucide-react'
+import {
+  AlignLeft,
+  Blocks,
+  Gauge,
+  History,
+  ListVideo,
+  Lock,
+  LockOpen,
+  Play,
+  Square,
+} from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { isSqlEngine } from '@shared/connection'
 import { Button, EnvBadge, EngineIcon, IconButton, Kbd } from '@/components/ui'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
@@ -181,7 +192,19 @@ export function SqlTab({ tab, active }: { tab: Tab; active: boolean }) {
             <AlignLeft size={15} />
           </IconButton>
         )}
-        {connection.engine === 'mysql' ? (
+        {isSqlEngine(connection.engine) && script.database ? (
+          <IconButton
+            label="Build a query"
+            onClick={() =>
+              useDialogs
+                .getState()
+                .openQueryBuilder({ connectionId: connection.id, database: script.database! })
+            }
+          >
+            <Blocks size={15} />
+          </IconButton>
+        ) : null}
+        {connection.engine === 'mysql' || connection.engine === 'postgresql' ? (
           <IconButton label="Show the query plan" onClick={() => showQueryPlan(scriptId)}>
             <Gauge size={15} />
           </IconButton>

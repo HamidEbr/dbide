@@ -4,6 +4,8 @@ import { Button, IconButton } from '@/components/ui'
 import { useDialogs, type DiagramRequest } from '@/state/dialogs'
 import { schemaCache } from '@/features/sql/completion/schema-cache'
 import { createScript, selectAllSql } from '@/features/sql/scripts'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
+import { useData } from '@/state/data'
 import { notify } from '@/state/notices'
 import {
   HEADER_H,
@@ -33,6 +35,8 @@ interface View {
 function DiagramBody({ request }: { request: DiagramRequest }) {
   const close = useDialogs((state) => state.closeDiagram)
   const { connectionId, database } = request
+  const engine = useData((state) => state.connections.find((c) => c.id === connectionId)?.engine)
+  const dialect: SqlDialect = (engine && dialectOf(engine)) || 'mysql'
   const [names, setNames] = useState<{ name: string; view: boolean }[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
@@ -227,7 +231,7 @@ function DiagramBody({ request }: { request: DiagramRequest }) {
     createScript({
       connectionId,
       database,
-      text: selectAllSql(database, name),
+      text: selectAllSql(database, name, 1000, dialect),
       name,
       run: true,
     })

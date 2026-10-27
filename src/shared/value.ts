@@ -1,7 +1,19 @@
+import type { SqlDialect } from './dialect'
 import type { Cell } from './query'
 
 const INTEGER_TYPES = new Set(['tinyint', 'smallint', 'mediumint', 'int'])
-const NUMERIC_TYPES = new Set([...INTEGER_TYPES, 'bigint', 'decimal', 'float', 'double', 'year'])
+const NUMERIC_TYPES = new Set([
+  ...INTEGER_TYPES,
+  'bigint',
+  'decimal',
+  'numeric',
+  'float',
+  'real',
+  'double',
+  'money',
+  'smallmoney',
+  'year',
+])
 const BINARY_TYPES = new Set([
   'bit',
   'binary',
@@ -11,6 +23,8 @@ const BINARY_TYPES = new Set([
   'mediumblob',
   'longblob',
   'geometry',
+  'bytea',
+  'image',
 ])
 
 export const isNumericType = (type: string): boolean => NUMERIC_TYPES.has(type)
@@ -178,11 +192,24 @@ export function mergeTotals(a: NumberTotals, b: NumberTotals): NumberTotals {
 const NUMBER_LITERAL = /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/
 
 /** A value as a SQL literal, for previews and for "copy as INSERT". */
-export function sqlLiteral(cell: Cell | undefined, type?: string): string {
+export function sqlLiteral(
+  cell: Cell | undefined,
+  type?: string,
+  dialect: SqlDialect = 'mysql',
+): string {
   if (cell === null || cell === undefined) return 'NULL'
-  if (cell instanceof Uint8Array) return cell.length === 0 ? "''" : `0x${toHex(cell)}`
+  if (cell instanceof Uint8Array) {
+    if (cell.length === 0) return dialect === 'postgresql' ? "''::bytea" : "''"
+    return dialect === 'postgresql' ? `'\\x${toHex(cell)}'::bytea` : `0x${toHex(cell)}`
+  }
   if (typeof cell === 'number') return Number.isFinite(cell) ? String(cell) : 'NULL'
-  if (typeof cell === 'boolean') return cell ? '1' : '0'
+  if (typeof cell === 'boolean') {
+    return dialect === 'postgresql' ? (cell ? 'TRUE' : 'FALSE') : cell ? '1' : '0'
+  }
   if (type && isNumericType(type) && NUMBER_LITERAL.test(cell)) return cell
-  return `'${cell.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
+  // MySQL reads a backslash as an escape; PostgreSQL and SQL Server do not.
+  const escaped =
+    dialect === 'mysql' ? cell.replace(/\\/g, '\\\\').replace(/'/g, "''") : cell.replace(/'/g, "''")
+  // SQL Server needs the N prefix to keep characters outside the server's code page.
+  return `${dialect === 'mssql' ? 'N' : ''}'${escaped}'`
 }

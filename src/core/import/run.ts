@@ -1,5 +1,5 @@
 import type { DriverSession } from '@shared/driver'
-import { quoteIdentifier } from '@shared/export-table'
+import { dialectInfo, type SqlDialect } from '@shared/dialect'
 import { IMPORT_BATCH_ROWS } from '@shared/import'
 import { sqlLiteral } from '@shared/value'
 import type { Records } from './records'
@@ -17,6 +17,7 @@ export interface ImportOptions {
   emptyAsNull: boolean
   /** A row that repeats a key already in the table is left out, rather than stopping the import. */
   skipDuplicates: boolean
+  dialect: SqlDialect
   signal: AbortSignal
   onProgress?: (rows: number) => void
 }
@@ -37,14 +38,19 @@ async function run(
  */
 export async function importRows(options: ImportOptions): Promise<{ rows: number }> {
   const { session, database, signal } = options
-  const target = `${quoteIdentifier(database)}.${quoteIdentifier(options.table)}`
+  const info = dialectInfo(options.dialect)
+  const quoteIdentifier = info.quote
+  const target = info.qualified(database, options.table)
   if (options.create) {
     const columns = options.create
       .map((c) => `  ${quoteIdentifier(c.name)} ${c.type} NULL`)
       .join(',\n')
     await run(session, `CREATE TABLE ${target} (\n${columns}\n)`, database, signal)
   }
-  const head = `INSERT ${options.skipDuplicates ? 'IGNORE ' : ''}INTO ${target} (${options.mapping
+  const ignore = options.skipDuplicates && options.dialect === 'mysql' ? 'IGNORE ' : ''
+  const tail =
+    options.skipDuplicates && options.dialect === 'postgresql' ? '\nON CONFLICT DO NOTHING' : ''
+  const head = `INSERT ${ignore}INTO ${target} (${options.mapping
     .map((m) => quoteIdentifier(m.target))
     .join(', ')}) VALUES\n`
 
@@ -52,13 +58,13 @@ export async function importRows(options: ImportOptions): Promise<{ rows: number
   let batch: string[] = []
   const flush = async (): Promise<void> => {
     if (batch.length === 0) return
-    await run(session, `${head}${batch.join(',\n')}`, database, signal)
+    await run(session, `${head}${batch.join(',\n')}${tail}`, database, signal)
     rows += batch.length
     batch = []
     options.onProgress?.(rows)
   }
 
-  await run(session, 'START TRANSACTION', database, signal)
+  await run(session, info.begin, database, signal)
   try {
     for await (const row of options.records.rows()) {
       signal.throwIfAborted()
@@ -68,7 +74,7 @@ export async function importRows(options: ImportOptions): Promise<{ rows: number
             const value = row[m.source] ?? null
             return value === null || (value === '' && options.emptyAsNull)
               ? 'NULL'
-              : sqlLiteral(value)
+              : sqlLiteral(value, undefined, options.dialect)
           })
           .join(', ')})`,
       )

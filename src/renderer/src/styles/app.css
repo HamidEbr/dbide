@@ -3574,3 +3574,117 @@ table.pivot tfoot td {
   margin: var(--space-2) 0 0;
   font-size: var(--fs-small);
 }
+
+.dialog-designer {
+  width: min(900px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+}
+.designer-columns {
+  max-height: 40vh;
+}
+.designer-columns input[type='text'],
+.designer-columns input:not([type]) {
+  width: 100%;
+  min-width: 8rem;
+}
+.designer-table-actions {
+  margin: var(--space-3) 0;
+}
+.designer-table-actions summary {
+  cursor: pointer;
+  color: var(--fg-1);
+}
+
+.params-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.params-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 10rem) 6.5rem 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dialog-builder {
+  width: min(1100px, 96vw);
+  height: min(780px, 92vh);
+  display: flex;
+  flex-direction: column;
+}
+.builder-body {
+  display: flex;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+}
+.builder-tables {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+.builder-tables ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+}
+.builder-tables li button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-0);
+  font: inherit;
+  cursor: pointer;
+}
+.builder-tables li button:hover {
+  background: var(--bg-2);
+}
+.builder-main {
+  flex: 1;
+  overflow: auto;
+  min-width: 0;
+}
+.builder-main h3 {
+  font-size: var(--fs-small);
+  color: var(--fg-2);
+  text-transform: uppercase;
+  margin: var(--space-3) 0 var(--space-1);
+}
+.builder-table {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.builder-table-head,
+.builder-row,
+.builder-on {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.builder-alias {
+  width: 4rem;
+}
+.builder-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+}
+.builder-sql {
+  max-height: 22vh;
+  overflow: auto;
+  margin-top: var(--space-2);
+}

@@ -14,6 +14,10 @@ export interface ParsedConnectionUri {
 const SCHEMES: Record<string, { engine: EngineKind; tls: boolean; port: number }> = {
   mysql: { engine: 'mysql', tls: false, port: 3306 },
   mariadb: { engine: 'mysql', tls: false, port: 3306 },
+  postgres: { engine: 'postgresql', tls: false, port: 5432 },
+  postgresql: { engine: 'postgresql', tls: false, port: 5432 },
+  sqlserver: { engine: 'mssql', tls: false, port: 1433 },
+  mssql: { engine: 'mssql', tls: false, port: 1433 },
   mongodb: { engine: 'mongodb', tls: false, port: 27017 },
   'mongodb+srv': { engine: 'mongodb', tls: true, port: 27017 },
   redis: { engine: 'redis', tls: false, port: 6379 },

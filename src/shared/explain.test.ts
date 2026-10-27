@@ -84,3 +84,53 @@ describe('parsePlan', () => {
     expect(parsePlan('{"a":1}')).toBeNull()
   })
 })
+
+describe('parsePlan for PostgreSQL', () => {
+  const pg = JSON.stringify([
+    {
+      Plan: {
+        'Node Type': 'Hash Join',
+        'Total Cost': 250.5,
+        'Plan Rows': 100,
+        'Hash Cond': '(o.customer_id = c.id)',
+        Plans: [
+          {
+            'Node Type': 'Seq Scan',
+            'Relation Name': 'orders',
+            Alias: 'o',
+            'Plan Rows': 50000,
+            'Total Cost': 200,
+          },
+          {
+            'Node Type': 'Index Scan',
+            'Relation Name': 'customers',
+            'Index Name': 'customers_pkey',
+            'Plan Rows': 1,
+            'Total Cost': 8,
+          },
+        ],
+      },
+    },
+  ])
+
+  it('reads the nodes, indented, with a warning for a big sequential scan', () => {
+    const plan = parsePlan(pg)!
+    expect(plan.cost).toBe(250.5)
+    expect(plan.steps.map((s) => [s.depth, s.title])).toEqual([
+      [0, 'Hash Join'],
+      [1, 'orders o'],
+      [1, 'customers'],
+    ])
+    expect(plan.steps[1]).toMatchObject({
+      access: 'Seq Scan',
+      rowsExamined: 50000,
+      warnings: ['full-scan'],
+    })
+    expect(plan.steps[2]).toMatchObject({
+      access: 'Index Scan',
+      key: 'customers_pkey',
+      warnings: [],
+    })
+    expect(plan.steps[0]!.condition).toBe('(o.customer_id = c.id)')
+  })
+})

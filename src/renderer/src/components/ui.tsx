@@ -66,6 +66,8 @@ export function EnvBadge({ environment }: { environment: Environment }) {
 
 const ENGINE_ICONS: Record<EngineKind, LucideIcon> = {
   mysql: Database,
+  postgresql: Database,
+  mssql: Database,
   mongodb: Leaf,
   redis: Zap,
   rabbitmq: Rabbit,

@@ -4,6 +4,8 @@
  * comments, `DELIMITER` — but are not a parser.
  */
 
+import type { SqlDialect } from './dialect'
+
 type SegmentKind = 'code' | 'comment' | 'string' | 'identifier' | 'hint'
 
 interface Segment {
@@ -72,6 +74,81 @@ function scan(sql: string): Segment[] {
   return segments
 }
 
+/**
+ * Rewrites a PostgreSQL or SQL Server script into the shape the rest of this file understands, character for
+ * character, so every offset stays where it was: comments and the insides of strings become blanks, `"name"` and
+ * `[name]` become `` `name` ``, `$$ … $$` becomes a string, `#` stops starting a comment, and a line with only `GO`
+ * becomes a `;`. The result is for finding statements and names, never for running.
+ */
+export function normalizeSql(sql: string, dialect: SqlDialect): string {
+  if (dialect === 'mysql') return sql
+  const n = sql.length
+  const out: string[] = []
+  const blank = (from: number, to: number): string => sql.slice(from, to).replace(/[^\n]/g, ' ')
+  let i = 0
+  while (i < n) {
+    const c = sql[i]!
+    const next = sql[i + 1]
+    if (c === '-' && next === '-') {
+      const end = sql.indexOf('\n', i)
+      const stop = end === -1 ? n : end
+      out.push(blank(i, stop))
+      i = stop
+    } else if (c === '/' && next === '*') {
+      const close = sql.indexOf('*/', i + 2)
+      const stop = close === -1 ? n : close + 2
+      out.push(blank(i, stop))
+      i = stop
+    } else if (c === "'") {
+      let j = i + 1
+      while (j < n) {
+        if (sql[j] === "'") {
+          if (sql[j + 1] === "'") j += 2
+          else break
+        } else j++
+      }
+      const closed = j < n
+      out.push("'", blank(i + 1, closed ? j : n), closed ? "'" : '')
+      i = closed ? j + 1 : n
+    } else if (c === '"' || (c === '[' && dialect === 'mssql')) {
+      const close = c === '[' ? ']' : '"'
+      let j = i + 1
+      while (j < n) {
+        if (sql[j] === close) {
+          if (sql[j + 1] === close) j += 2
+          else break
+        } else j++
+      }
+      const closed = j < n
+      out.push('`', sql.slice(i + 1, closed ? j : n).replace(/`/g, '_'), closed ? '`' : '')
+      i = closed ? j + 1 : n
+    } else if (c === '$' && dialect === 'postgresql') {
+      const tag = /^\$([A-Za-z_]\w*)?\$/.exec(sql.slice(i, i + 64))
+      if (tag) {
+        const close = sql.indexOf(tag[0], i + tag[0].length)
+        const stop = close === -1 ? n : close + tag[0].length
+        out.push("'", blank(i + 1, Math.max(i + 1, stop - 1)), "'")
+        i = stop
+      } else {
+        out.push(c)
+        i++
+      }
+    } else if (c === '#') {
+      out.push('_')
+      i++
+    } else {
+      out.push(c)
+      i++
+    }
+  }
+  let text = out.join('')
+  if (dialect === 'mssql') {
+    // A line with only GO (and maybe a count) ends a batch.
+    text = text.replace(/^([ \t]*)GO([ \t]+\d+)?[ \t]*$/gim, (m) => `;${' '.repeat(m.length - 1)}`)
+  }
+  return text
+}
+
 const isSpace = (code: number): boolean =>
   code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12
 
@@ -93,7 +170,8 @@ const DELIMITER_COMMAND = /^delimiter[ \t]+(\S+)/i
  * inside strings, comments, and quoted identifiers, and honoring `DELIMITER` for stored programs.
  * Statements that are only comments are dropped.
  */
-export function splitStatements(sql: string): SqlStatement[] {
+export function splitStatements(original: string, dialect: SqlDialect = 'mysql'): SqlStatement[] {
+  const sql = normalizeSql(original, dialect)
   const statements: SqlStatement[] = []
   let delimiter = ';'
   let first = -1
@@ -110,7 +188,7 @@ export function splitStatements(sql: string): SqlStatement[] {
   }
   const emit = (end: number): void => {
     if (first !== -1) {
-      statements.push({ text: sql.slice(first, last), from: first, to: last, end })
+      statements.push({ text: original.slice(first, last), from: first, to: last, end })
     }
     first = -1
     last = -1
@@ -168,7 +246,8 @@ export function statementAt(statements: SqlStatement[], offset: number): SqlStat
 }
 
 /** Replaces comments, strings, and quoted names with spaces, keeping offsets. For keyword checks. */
-export function maskSql(sql: string): string {
+export function maskSql(original: string, dialect: SqlDialect = 'mysql'): string {
+  const sql = normalizeSql(original, dialect)
   let masked = ''
   for (const segment of scan(sql)) {
     const text = sql.slice(segment.start, segment.end)
@@ -179,7 +258,8 @@ export function maskSql(sql: string): string {
 }
 
 /** Like `maskSql`, but quoted names such as `orders` stay, because autocomplete has to read them. */
-export function maskLiterals(sql: string): string {
+export function maskLiterals(original: string, dialect: SqlDialect = 'mysql'): string {
+  const sql = normalizeSql(original, dialect)
   let masked = ''
   for (const segment of scan(sql)) {
     const text = sql.slice(segment.start, segment.end)
@@ -190,7 +270,12 @@ export function maskLiterals(sql: string): string {
 }
 
 /** Whether the offset is inside a string or a comment, where names are not completed. */
-export function insideLiteral(sql: string, offset: number): boolean {
+export function insideLiteral(
+  original: string,
+  offset: number,
+  dialect: SqlDialect = 'mysql',
+): boolean {
+  const sql = normalizeSql(original, dialect)
   for (const segment of scan(sql)) {
     if (segment.kind !== 'string' && segment.kind !== 'comment') continue
     // Just after the opening mark is inside; just after the closing one is not, unless it never closed.

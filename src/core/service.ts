@@ -13,6 +13,7 @@ import {
 } from '@shared/connection'
 import { ENVIRONMENT_POLICIES } from '@shared/environment'
 import { exportFormat } from '@shared/export'
+import { dialectOf } from '@shared/dialect'
 import { CONNECTION_SOURCES, type ConnectionSource } from '@shared/connection-sources'
 import {
   IMPORT_FORMATS,
@@ -1184,7 +1185,7 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           sql,
           database: params.database,
           format: params.format,
-          options: params.options,
+          options: { ...params.options, dialect: dialectOf(config.engine) ?? 'mysql' },
           sink,
           signal: ctx.signal,
           onProgress: (progress) =>
@@ -1203,6 +1204,79 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       } catch (error) {
         await sink.abort()
         throw error
+      } finally {
+        await session.close()
+      }
+    },
+
+    'ddl.run': async (input, ctx) => {
+      const params = (input ?? {}) as Record<string, unknown>
+      const { connectionId, database, statements } = params
+      if (
+        typeof connectionId !== 'string' ||
+        typeof database !== 'string' ||
+        !Array.isArray(statements) ||
+        statements.length === 0 ||
+        statements.length > 100 ||
+        statements.some((s) => typeof s !== 'string' || s.trim() === '' || s.length > 20_000)
+      ) {
+        throw new RpcError('INVALID_INPUT', 'Give the statements to run.')
+      }
+      const { config, secrets: saved } = await loadConnection(connectionId)
+      const dialect = dialectOf(config.engine)
+      if (!dialect) throw new RpcError('UNSUPPORTED', 'Only a SQL server has tables to change.')
+      if (ENVIRONMENT_POLICIES[config.environment].readOnlyByDefault && params.confirmed !== true) {
+        throw new RpcError(
+          'FORBIDDEN',
+          `${config.name} is a ${ENVIRONMENT_POLICIES[config.environment].label.toLowerCase()} connection. Confirm that its schema may be changed.`,
+        )
+      }
+      const checked = (statements as string[]).map((text) => {
+        const parts = splitStatements(text, dialect)
+        if (parts.length !== 1) throw new RpcError('INVALID_INPUT', 'Each change is one statement.')
+        const sql = parts[0]!.text
+        const masked = maskSql(sql, dialect)
+        const rename = dialect === 'mssql' && /^\s*EXEC(UTE)?\s+sp_rename\b/i.test(masked)
+        if (!rename && classifyStatement(sql).kind !== 'ddl') {
+          throw new RpcError('NOT_DDL', 'Only schema changes can be run from here.')
+        }
+        if (/\b(DROP|TRUNCATE)\s+(DATABASE|SCHEMA)\b/i.test(masked)) {
+          throw new RpcError(
+            'NOT_DDL',
+            'Dropping a whole database or schema is not done from here.',
+          )
+        }
+        return sql
+      })
+      const session = await drivers.get(config.engine).connect({
+        config,
+        secrets: saved,
+        endpoint: { host: config.host, port: config.port },
+        readOnly: false,
+        signal: ctx.signal,
+      })
+      let ran = 0
+      try {
+        for (const sql of checked) {
+          ctx.signal.throwIfAborted()
+          try {
+            for await (const _batch of session.execute(
+              { text: sql, target: database },
+              ctx.signal,
+            )) {
+              ctx.signal.throwIfAborted()
+            }
+          } catch (error) {
+            if (ctx.signal.aborted) throw error
+            const reason = error instanceof Error ? error.message : String(error)
+            throw new RpcError(
+              (error as { code?: string }).code ?? 'DDL_FAILED',
+              `${reason}${ran > 0 ? ` (${ran} of ${checked.length} changes had already been made.)` : ''}`,
+            )
+          }
+          ran++
+        }
+        return { ran }
       } finally {
         await session.close()
       }
@@ -1287,8 +1361,9 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
         )
       }
       const { config, secrets: saved } = await loadConnection(connectionId)
-      if (config.engine !== 'mysql') {
-        throw new RpcError('UNSUPPORTED', 'Only a MySQL table can be imported into.')
+      const dialect = dialectOf(config.engine)
+      if (!dialect) {
+        throw new RpcError('UNSUPPORTED', 'Only a table of a SQL server can be imported into.')
       }
       if (ENVIRONMENT_POLICIES[config.environment].readOnlyByDefault && params.confirmed !== true) {
         throw new RpcError(
@@ -1314,7 +1389,8 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           mapping: mapping as { source: number; target: string }[],
           records,
           emptyAsNull: params.emptyAsNull === true,
-          skipDuplicates: params.skipDuplicates === true,
+          skipDuplicates: params.skipDuplicates === true && dialect !== 'mssql',
+          dialect,
           signal: ctx.signal,
           onProgress: (done) => ctx.emit(CoreEvents.importProgress, { importId, rows: done }),
         })
@@ -1350,8 +1426,8 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
         throw new RpcError('INVALID_INPUT', 'That statement is already an EXPLAIN.')
       }
       const { config, secrets: saved } = await loadConnection(params.connectionId)
-      if (config.engine !== 'mysql') {
-        throw new RpcError('UNSUPPORTED', 'Only MySQL can show a query plan.')
+      if (config.engine !== 'mysql' && config.engine !== 'postgresql') {
+        throw new RpcError('UNSUPPORTED', 'A query plan is shown for MySQL and PostgreSQL.')
       }
       const session = await drivers.get(config.engine).connect({
         config,
@@ -1366,27 +1442,35 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           ctx.signal,
         )
         const iterator = results[Symbol.asyncIterator]()
+        const lines: string[] = []
         try {
           for (;;) {
             const next = await iterator.next()
-            if (next.done) return null
-            if (next.value.kind === 'rows') {
-              const cell = next.value.rows[0]?.[0]
-              return cell instanceof Uint8Array
-                ? new TextDecoder().decode(cell)
-                : cell === null || cell === undefined
-                  ? null
-                  : String(cell)
+            if (next.done) break
+            if (next.value.kind !== 'rows') continue
+            for (const row of next.value.rows) {
+              const cell = row[0]
+              if (cell === null || cell === undefined) continue
+              lines.push(cell instanceof Uint8Array ? new TextDecoder().decode(cell) : String(cell))
             }
           }
         } finally {
           await iterator.return?.().catch(() => undefined)
         }
+        // A plan with one line is JSON or MySQL's tree; PostgreSQL's timed plan is a line per row.
+        return lines.length === 0 ? null : lines.join('\n')
       }
       try {
         return analyze
           ? { json: null, text: await first(`EXPLAIN ANALYZE ${sql}`) }
-          : { json: await first(`EXPLAIN FORMAT=JSON ${sql}`), text: null }
+          : {
+              json: await first(
+                config.engine === 'postgresql'
+                  ? `EXPLAIN (FORMAT JSON) ${sql}`
+                  : `EXPLAIN FORMAT=JSON ${sql}`,
+              ),
+              text: null,
+            }
       } finally {
         await session.close()
       }

@@ -1,4 +1,5 @@
 import { splitMongoStatements } from '@shared/mongo/lang'
+import type { SqlDialect } from '@shared/dialect'
 import type { ScriptLanguage } from '@shared/scripts'
 import { splitStatements } from '@shared/sql'
 
@@ -11,8 +12,12 @@ export interface Statement {
 }
 
 /** Cuts a script into the statements that run one after another. */
-export function statementsOf(language: ScriptLanguage, text: string): Statement[] {
-  return language === 'mongodb' ? splitMongoStatements(text) : splitStatements(text)
+export function statementsOf(
+  language: ScriptLanguage,
+  text: string,
+  dialect: SqlDialect = 'mysql',
+): Statement[] {
+  return language === 'mongodb' ? splitMongoStatements(text) : splitStatements(text, dialect)
 }
 
 /** The extension of a script's file, for showing next to its name. */

@@ -1,10 +1,14 @@
 import { CoreEvents } from '@shared/api'
+import { dialectOf } from '@shared/dialect'
+import { findParameters, substituteParameters } from '@shared/params'
 import { DEFAULT_PAGE_SIZE, type QueryEventMessage } from '@shared/query'
 import { RpcError } from '@shared/rpc'
 import { classifyStatement } from '@shared/sql'
 import { coreLink } from '@/ipc/link'
 import { useData } from '@/state/data'
 import { useGuard } from '@/state/guard'
+import { notify } from '@/state/notices'
+import { useParameterPrompt } from '@/state/params'
 import { useScripts, type RunState, type ScriptRun, type StatementRun } from '@/state/scripts'
 import { schemaCache } from './completion/schema-cache'
 import { evaluateRun } from './guard'
@@ -243,10 +247,27 @@ async function startRun(scriptId: string, statements: string[]): Promise<void> {
 }
 
 /** Checks the run against the connection's safeguards, asks if needed, then runs it. */
-export async function requestRun(scriptId: string, statements: string[]): Promise<void> {
+export async function requestRun(scriptId: string, requested: string[]): Promise<void> {
+  let statements = requested
   const script = useScripts.getState().scripts[scriptId]
   const connection = useData.getState().connections.find((c) => c.id === script?.connectionId)
   if (!script || !connection || statements.length === 0 || isBusy(script.run)) return
+
+  // Parameters such as :id are asked for once, then written into the statements as values.
+  if (script.language === 'sql') {
+    const dialect = dialectOf(connection.engine) ?? 'mysql'
+    const names = findParameters(statements, dialect)
+    if (names.length > 0) {
+      const values = await useParameterPrompt.getState().ask(scriptId, names)
+      if (!values) return
+      const result = substituteParameters(statements, values, dialect)
+      if (!result.ok) {
+        notify(result.message)
+        return
+      }
+      statements = result.statements
+    }
+  }
 
   const verdict = evaluateRun(statements, {
     environment: connection.environment,

@@ -12,6 +12,7 @@ import {
   Import,
   FileCode,
   FileUp,
+  GitCompare,
   Network,
   Folder,
   Hash,
@@ -40,6 +41,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { prefixGlob } from '@shared/redis/types'
 import { DENSITY_ROW_HEIGHT } from '@shared/settings'
 import { EngineIcon, EnvDot, IconButton, Kbd } from '@/components/ui'
+import { dialectOf } from '@shared/dialect'
 import { openTableExport } from '@/features/sql/export/open'
 import { useDialogs } from '@/state/dialogs'
 import { createScript, findAllMongo, selectAllSql } from '@/features/sql/scripts'
@@ -175,7 +177,15 @@ export function Navigator() {
       createScript({
         connectionId: row.connectionId,
         database: row.node.scope,
-        text: mongo ? findAllMongo(row.node.label) : selectAllSql(row.node.scope, row.node.label),
+        text: mongo
+          ? findAllMongo(row.node.label)
+          : selectAllSql(
+              row.node.scope,
+              row.node.label,
+              1000,
+              dialectOf(connections.find((c) => c.id === row.connectionId)?.engine ?? 'mysql') ??
+                'mysql',
+            ),
         name: row.node.label,
         run: true,
       })
@@ -203,6 +213,16 @@ export function Navigator() {
       const [, db] = JSON.parse(row.node.id) as string[]
       workbench.openRedis(row.connectionId, { view: 'console', db: Number(db) })
     }
+  }
+
+  const engineOf = (row: TreeRow): string | undefined =>
+    row.type === 'connection'
+      ? row.connection.engine
+      : connections.find((c) => c.id === row.connectionId)?.engine
+  /** A node of a server that speaks SQL, which the table tools work on. */
+  const sqlEngine = (row: TreeRow): boolean => {
+    const engine = engineOf(row)
+    return engine === 'mysql' || engine === 'postgresql' || engine === 'mssql'
   }
 
   const newScript = (row: TreeRow): void => {
@@ -326,16 +346,34 @@ export function Navigator() {
                 onConsole={() => openConsole(row)}
                 canExport={
                   row.type === 'node' &&
-                  (row.node.kind === 'table' ||
-                    row.node.kind === 'view' ||
-                    row.node.kind === 'database') &&
-                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                  (((row.node.kind === 'table' || row.node.kind === 'view') && sqlEngine(row)) ||
+                    // Writing a whole database as a SQL file reads its definitions with SHOW CREATE.
+                    (row.node.kind === 'database' && engineOf(row) === 'mysql'))
                 }
-                canDiagram={
+                canDiagram={row.type === 'node' && row.node.kind === 'database' && sqlEngine(row)}
+                canDesign={
                   row.type === 'node' &&
-                  row.node.kind === 'database' &&
-                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                  (row.node.kind === 'table' || row.node.kind === 'view') &&
+                  sqlEngine(row)
                 }
+                onDesign={() => {
+                  if (row.type === 'node' && row.node.scope) {
+                    useDialogs.getState().openTableDesigner({
+                      connectionId: row.connectionId,
+                      schema: row.node.scope,
+                      table: row.node.label,
+                      view: row.node.kind === 'view',
+                    })
+                  }
+                }}
+                onCompare={() => {
+                  if (row.type === 'node') {
+                    useDialogs.getState().openSchemaCompare({
+                      connectionId: row.connectionId,
+                      database: row.node.label,
+                    })
+                  }
+                }}
                 onDiagram={() => {
                   if (row.type === 'node') {
                     useDialogs.getState().openDiagram({
@@ -347,7 +385,7 @@ export function Navigator() {
                 canImport={
                   row.type === 'node' &&
                   (row.node.kind === 'table' || row.node.kind === 'database') &&
-                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                  sqlEngine(row)
                 }
                 onImport={() => {
                   if (row.type !== 'node') return
@@ -397,6 +435,10 @@ interface RowProps {
   /** A database of a SQL server, whose tables can be drawn with the keys between them. */
   canDiagram: boolean
   onDiagram: () => void
+  /** A table or view of a SQL server, whose columns can be looked at and changed. */
+  canDesign: boolean
+  onDesign: () => void
+  onCompare: () => void
 }
 
 function TreeRowView({
@@ -414,6 +456,9 @@ function TreeRowView({
   onImport,
   canDiagram,
   onDiagram,
+  canDesign,
+  onDesign,
+  onCompare,
 }: RowProps) {
   const indent = 8 + row.depth * INDENT
 
@@ -599,6 +644,17 @@ function TreeRowView({
           ) : null}
           {canDiagram ? (
             <IconButton
+              label={`Compare ${node.label} with another schema`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onCompare()
+              }}
+            >
+              <GitCompare size={12} />
+            </IconButton>
+          ) : null}
+          {canDiagram ? (
+            <IconButton
               label={`Diagram of ${node.label}`}
               onClick={(event) => {
                 event.stopPropagation()
@@ -606,6 +662,17 @@ function TreeRowView({
               }}
             >
               <Network size={12} />
+            </IconButton>
+          ) : null}
+          {canDesign ? (
+            <IconButton
+              label={`Columns of ${node.label}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onDesign()
+              }}
+            >
+              <Columns3 size={12} />
             </IconButton>
           ) : null}
           {canImport ? (

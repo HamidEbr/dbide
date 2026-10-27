@@ -3,7 +3,9 @@ import type { Driver, DriverDescriptor } from '@shared/driver'
 import { RpcError } from '@shared/rpc'
 import { demoDriver } from './demo/driver'
 import { mongoDriver } from './mongodb/driver'
+import { mssqlDriver } from './mssql/driver'
 import { mysqlDriver } from './mysql/driver'
+import { postgresDriver } from './postgres/driver'
 import { rabbitmqDriver } from './rabbitmq/driver'
 import { redisDriver } from './redis/driver'
 
@@ -29,6 +31,8 @@ export function createDefaultRegistry(): DriverRegistry {
   return new DriverRegistry([
     // The demo engine stands in for MySQL when no server is around (smoke test, UI work).
     process.env.DBIDE_DEMO_ENGINE === '1' ? demoDriver : mysqlDriver,
+    postgresDriver,
+    mssqlDriver,
     mongoDriver,
     redisDriver,
     rabbitmqDriver,

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { classifyStatement, isReadOnlySafe, maskSql, splitStatements, statementAt } from './sql'
+import {
+  classifyStatement,
+  isReadOnlySafe,
+  maskSql,
+  normalizeSql,
+  splitStatements,
+  statementAt,
+} from './sql'
 
 const texts = (sql: string): string[] => splitStatements(sql).map((s) => s.text)
 
@@ -177,5 +184,39 @@ describe('classifyStatement', () => {
     expect(isReadOnlySafe(classifyStatement('USE shop'))).toBe(true)
     expect(isReadOnlySafe(classifyStatement('INSERT INTO t VALUES (1)'))).toBe(false)
     expect(isReadOnlySafe(classifyStatement('DROP TABLE t'))).toBe(false)
+  })
+})
+
+describe('other servers’ SQL', () => {
+  it('splits PostgreSQL scripts around dollar-quoted bodies and double-quoted names', () => {
+    const script = `CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;
+SELECT "a;b" FROM "t" -- done;
+;SELECT 'it''s; fine'`
+    expect(splitStatements(script, 'postgresql').map((s) => s.text)).toEqual([
+      'CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql',
+      'SELECT "a;b" FROM "t"',
+      "SELECT 'it''s; fine'",
+    ])
+    // A backslash does not escape a quote in standard PostgreSQL strings.
+    expect(splitStatements("SELECT 'a\\'; SELECT 2", 'postgresql').map((s) => s.text)).toEqual([
+      "SELECT 'a\\'",
+      'SELECT 2',
+    ])
+  })
+
+  it('splits SQL Server scripts at GO, and keeps #temp tables and [brackets] whole', () => {
+    const script = 'SELECT [a;b] FROM #t\nGO\nSELECT 2\ngo 3\nSELECT 3'
+    expect(splitStatements(script, 'mssql').map((s) => s.text)).toEqual([
+      'SELECT [a;b] FROM #t',
+      'SELECT 2',
+      'SELECT 3',
+    ])
+  })
+
+  it('keeps every offset where it was', () => {
+    for (const dialect of ['postgresql', 'mssql'] as const) {
+      const script = 'SELECT "x", [y], \'z\', $$q$$ -- c\n/* b */ FROM #t'
+      expect(normalizeSql(script, dialect)).toHaveLength(script.length)
+    }
   })
 })

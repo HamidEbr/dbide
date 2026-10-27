@@ -70,6 +70,20 @@ export function columnNameOf(heading: string, position: number): string {
   return cleaned === '' ? `column_${position + 1}` : cleaned
 }
 
+/** A column type guessed in MySQL's words, as the server named by `dialect` writes it. */
+export function typeFor(type: string, dialect: 'mysql' | 'postgresql' | 'mssql'): string {
+  if (dialect === 'mysql') return type
+  if (dialect === 'postgresql') {
+    if (type === 'DOUBLE') return 'DOUBLE PRECISION'
+    if (type === 'DATETIME') return 'TIMESTAMP'
+    return type
+  }
+  if (type === 'DOUBLE') return 'FLOAT'
+  if (type === 'DATETIME') return 'DATETIME2'
+  if (type === 'TEXT') return 'NVARCHAR(MAX)'
+  return type.replace(/^VARCHAR/, 'NVARCHAR')
+}
+
 /** Statements this size or smaller are written together, so a big file takes few round trips. */
 export const IMPORT_BATCH_ROWS = 500
 export const IMPORT_MAX_JSON_BYTES = 256 * 1024 * 1024

@@ -418,6 +418,15 @@ export interface CoreApi {
       /** The user closed the save dialog without choosing a file. */
       | { status: 'dismissed' }
   }
+  /**
+   * Runs schema changes (ALTER, CREATE, DROP, RENAME) one after another on a connection that can write. Each must be
+   * a single statement of that kind, and a connection that is read-only by default needs `confirmed`. Stops at the
+   * first that fails and says how many had run.
+   */
+  'ddl.run': {
+    params: { connectionId: string; database: string; statements: string[]; confirmed: boolean }
+    result: { ran: number }
+  }
   /** A native open dialog for a file to import. Null when the user cancels. */
   'import.choose': {
     params: void

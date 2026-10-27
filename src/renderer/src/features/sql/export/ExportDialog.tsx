@@ -10,10 +10,12 @@ import {
   type ExportFormat,
   type ExportOptions,
 } from '@shared/export'
+import { dialectOf, type SqlDialect } from '@shared/dialect'
 import { buildTableSelect } from '@shared/export-table'
 import { RpcError } from '@shared/rpc'
 import { Button, Field, IconButton, Segmented } from '@/components/ui'
 import { coreLink } from '@/ipc/link'
+import { useData } from '@/state/data'
 import { useDialogs, type ExportRequest } from '@/state/dialogs'
 import { notify } from '@/state/notices'
 import { singleSourceName } from './open'
@@ -112,6 +114,10 @@ function Check({
 
 function ExportBody({ request }: { request: ExportRequest }) {
   const close = useDialogs((state) => state.closeExport)
+  const engine = useData(
+    (state) => state.connections.find((c) => c.id === request.connectionId)?.engine,
+  )
+  const dialect: SqlDialect = (engine && dialectOf(engine)) || 'mysql'
   const table = request.table
   const source = table
     ? { schema: table.schema, table: table.table }
@@ -136,6 +142,7 @@ function ExportBody({ request }: { request: ExportRequest }) {
           limit: limitValid ? limit : null,
         },
         table.columns,
+        dialect,
       )
     : request.sql
   const [options, setOptions] = useState<ExportOptions>({

@@ -1,5 +1,6 @@
 import type { ColumnInfo } from './driver'
 import type { Cell } from './query'
+import { dialectInfo, type SqlDialect } from './dialect'
 import { isNumericType, sqlLiteral, toHex } from './value'
 
 /**
@@ -54,6 +55,8 @@ export interface ExportOptions {
   tableName: string
   /** Rows per INSERT statement. 1 writes one statement per row. */
   rowsPerInsert: number
+  /** How a SQL file writes names and values. MySQL when missing. */
+  dialect?: SqlDialect
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -77,10 +80,15 @@ export interface RowFormatter {
   end(): string
 }
 
-const quoteIdentifier = (name: string): string => `\`${name.replace(/`/g, '``')}\``
+const quoteIdentifier = (name: string, dialect: SqlDialect = 'mysql'): string =>
+  dialectInfo(dialect).quote(name)
 
 /** `shop.orders` becomes `shop`.`orders`. */
-const quoteTable = (name: string): string => name.split('.').map(quoteIdentifier).join('.')
+const quoteTable = (name: string, dialect: SqlDialect = 'mysql'): string =>
+  name
+    .split('.')
+    .map((part) => quoteIdentifier(part, dialect))
+    .join('.')
 
 /** A cell as plain text. Binary values become 0x-prefixed hex. */
 function cellText(cell: Cell | undefined): string {
@@ -195,8 +203,11 @@ function ndjsonFormatter(options: ExportOptions): RowFormatter {
 
 function sqlFormatter(options: ExportOptions): RowFormatter {
   const eol = options.crlf ? '\r\n' : '\n'
-  const perInsert = Math.min(MAX_ROWS_PER_INSERT, Math.max(1, Math.floor(options.rowsPerInsert)))
-  const table = quoteTable(options.tableName.trim() || 'table_name')
+  // SQL Server accepts at most a thousand rows in one VALUES list.
+  const most = options.dialect === 'mssql' ? 1000 : MAX_ROWS_PER_INSERT
+  const perInsert = Math.min(most, Math.max(1, Math.floor(options.rowsPerInsert)))
+  const dialect = options.dialect ?? 'mysql'
+  const table = quoteTable(options.tableName.trim() || 'table_name', dialect)
   let columns: readonly ColumnInfo[] = []
   let head = ''
   let pending: string[] = []
@@ -214,11 +225,11 @@ function sqlFormatter(options: ExportOptions): RowFormatter {
   return {
     start(cols) {
       columns = cols
-      head = `INSERT INTO ${table} (${cols.map((c) => quoteIdentifier(c.name)).join(', ')})`
+      head = `INSERT INTO ${table} (${cols.map((c) => quoteIdentifier(c.name, dialect)).join(', ')})`
       return ''
     },
     row(cells) {
-      pending.push(cells.map((cell, i) => sqlLiteral(cell, columns[i]?.type)).join(', '))
+      pending.push(cells.map((cell, i) => sqlLiteral(cell, columns[i]?.type, dialect)).join(', '))
       return pending.length >= perInsert ? flush() : ''
     },
     end: flush,

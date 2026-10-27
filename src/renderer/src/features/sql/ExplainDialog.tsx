@@ -7,6 +7,10 @@ import { coreLink } from '@/ipc/link'
 import { useDialogs, type ExplainRequest } from '@/state/dialogs'
 
 const ACCESS_HINT: Record<string, string> = {
+  'Seq Scan': 'Reads the whole table',
+  'Index Scan': 'Looks rows up by an index',
+  'Index Only Scan': 'Reads only the index',
+  'Bitmap Heap Scan': 'Reads the rows an index pointed at, page by page',
   ALL: 'Reads the whole table',
   index: 'Reads the whole index',
   range: 'Reads a range of an index',
@@ -20,7 +24,11 @@ const ACCESS_HINT: Record<string, string> = {
 
 /** How bad an access type is, for its colour: a whole-table read is the one to look at. */
 const accessTone = (access: string | undefined): 'bad' | 'warn' | 'good' =>
-  access === 'ALL' ? 'bad' : access === 'index' || access === 'index_merge' ? 'warn' : 'good'
+  access === 'ALL' || access === 'Seq Scan'
+    ? 'bad'
+    : access === 'index' || access === 'index_merge' || access === 'Bitmap Heap Scan'
+      ? 'warn'
+      : 'good'
 
 const number = (n: number): string => Math.round(n).toLocaleString()
 

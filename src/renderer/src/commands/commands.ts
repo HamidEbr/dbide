@@ -84,6 +84,40 @@ export function registerBuiltinCommands(): void {
       run: () => useDialogs.getState().openDbeaverImport(),
     },
     {
+      id: 'schema.compare',
+      title: 'Compare this schema with another…',
+      category: 'Connection',
+      run: () => {
+        const id = activeScriptId()
+        const script = id ? useScripts.getState().scripts[id] : undefined
+        if (script?.connectionId && script.database) {
+          useDialogs
+            .getState()
+            .openSchemaCompare({ connectionId: script.connectionId, database: script.database })
+        } else {
+          notify('Open a script on a database first, or use the compare button beside a database.')
+        }
+      },
+    },
+    {
+      id: 'sql.builder',
+      title: 'Build a query…',
+      category: 'SQL',
+      shortcut: 'Mod+Alt+Q',
+      when: inSqlTab,
+      run: () => {
+        const id = activeScriptId()
+        const script = id ? useScripts.getState().scripts[id] : undefined
+        if (script?.connectionId && script.database) {
+          useDialogs
+            .getState()
+            .openQueryBuilder({ connectionId: script.connectionId, database: script.database })
+        } else {
+          notify('Pick a database for the script first.')
+        }
+      },
+    },
+    {
       id: 'sql.explain',
       title: 'Show the query plan',
       category: 'SQL',

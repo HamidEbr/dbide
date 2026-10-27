@@ -50,6 +50,26 @@ export interface DiagramRequest {
   database: string
 }
 
+/** A schema to compare with another, and write the script that makes the other match. */
+export interface SchemaCompareRequest {
+  connectionId: string
+  database: string
+}
+
+/** One table's columns, to look at and change. */
+export interface TableDesignerRequest {
+  connectionId: string
+  schema: string
+  table: string
+  view?: boolean
+}
+
+/** A query put together from choices, for a database. */
+export interface QueryBuilderRequest {
+  connectionId: string
+  database: string
+}
+
 interface DialogsState {
   /** The script whose local history is open. */
   localHistory: string | null
@@ -60,6 +80,9 @@ interface DialogsState {
   importData: ImportRequest | null
   compare: CompareRequest | null
   diagram: DiagramRequest | null
+  schemaCompare: SchemaCompareRequest | null
+  tableDesigner: TableDesignerRequest | null
+  queryBuilder: QueryBuilderRequest | null
   openLocalHistory: (scriptId: string) => void
   closeLocalHistory: () => void
   openExport: (request: ExportRequest) => void
@@ -76,6 +99,12 @@ interface DialogsState {
   closeCompare: () => void
   openDiagram: (request: DiagramRequest) => void
   closeDiagram: () => void
+  openSchemaCompare: (request: SchemaCompareRequest) => void
+  closeSchemaCompare: () => void
+  openTableDesigner: (request: TableDesignerRequest) => void
+  closeTableDesigner: () => void
+  openQueryBuilder: (request: QueryBuilderRequest) => void
+  closeQueryBuilder: () => void
 }
 
 /** Which of the larger dialogs is open. The dialogs hold the rest of their own state. */
@@ -88,6 +117,9 @@ export const useDialogs = create<DialogsState>((set) => ({
   importData: null,
   compare: null,
   diagram: null,
+  schemaCompare: null,
+  tableDesigner: null,
+  queryBuilder: null,
   openLocalHistory: (scriptId) => set({ localHistory: scriptId }),
   closeLocalHistory: () => set({ localHistory: null }),
   openExport: (request) => set({ export: request }),
@@ -104,4 +136,10 @@ export const useDialogs = create<DialogsState>((set) => ({
   closeCompare: () => set({ compare: null }),
   openDiagram: (request) => set({ diagram: request }),
   closeDiagram: () => set({ diagram: null }),
+  openSchemaCompare: (request) => set({ schemaCompare: request }),
+  closeSchemaCompare: () => set({ schemaCompare: null }),
+  openTableDesigner: (request) => set({ tableDesigner: request }),
+  closeTableDesigner: () => set({ tableDesigner: null }),
+  openQueryBuilder: (request) => set({ queryBuilder: request }),
+  closeQueryBuilder: () => set({ queryBuilder: null }),
 }))

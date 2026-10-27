@@ -32,8 +32,8 @@ export function runFromEditor(scriptId: string, mode: 'cursor' | 'all'): void {
 export function showQueryPlan(scriptId: string): void {
   const script = useScripts.getState().scripts[scriptId]
   const connection = useData.getState().connections.find((c) => c.id === script?.connectionId)
-  if (!script || connection?.engine !== 'mysql') {
-    notify('A query plan is shown for MySQL scripts.')
+  if (!script || (connection?.engine !== 'mysql' && connection?.engine !== 'postgresql')) {
+    notify('A query plan is shown for MySQL and PostgreSQL scripts.')
     return
   }
   const sql = editorFor(scriptId)?.statements('cursor')[0]

@@ -63,6 +63,8 @@ export async function setWritable(connectionId: string, writable: boolean): Prom
 /** What unlocking a connection of each engine lets a person do, said in the question that asks first. */
 const UNLOCK_ALLOWS: Record<EngineKind, string> = {
   mysql: 'change rows and the schema',
+  postgresql: 'change rows and the schema',
+  mssql: 'change rows and the schema',
   mongodb: 'change documents and collections',
   redis: 'edit, rename and delete keys, and run commands that change data',
   rabbitmq: 'publish, purge, create and delete on this broker',

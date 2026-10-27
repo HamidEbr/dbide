@@ -43,6 +43,8 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 
 const DEFAULT_PORTS: Record<EngineKind, number> = {
   mysql: 3306,
+  postgresql: 5432,
+  mssql: 1433,
   mongodb: 27017,
   redis: 6379,
   rabbitmq: 5672,
@@ -52,6 +54,8 @@ const DEFAULT_PORTS: Record<EngineKind, number> = {
 export function engineOf(provider: string, driver: string): EngineKind | null {
   const id = `${provider} ${driver}`.toLowerCase()
   if (/mysql|mariadb/.test(id)) return 'mysql'
+  if (/postgres|redshift|cockroach/.test(id)) return 'postgresql'
+  if (/sqlserver|mssql|sql_server|jtds/.test(id)) return 'mssql'
   if (/mongo/.test(id)) return 'mongodb'
   if (/redis/.test(id)) return 'redis'
   return null

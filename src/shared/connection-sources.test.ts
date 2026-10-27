@@ -65,11 +65,11 @@ describe('parseSequelAce', () => {
 describe('parseNavicat', () => {
   const xml = `<Connections Ver="1.5">
 <Connection ConnectionName="Main" ConnType="MYSQL" Host="h" Port="3306" UserName="u" Password="AB12" InitialDatabase="d" />
-<Connection ConnectionName="PG" ConnType="POSTGRESQL" Host="p" />
+<Connection ConnectionName="PG" ConnType="ORACLE" Host="p" />
 </Connections>`
   it('reads connections, decrypting passwords, and lists the ones it cannot open', () => {
     const result = parseNavicat(xml, (hex) => (hex === 'AB12' ? 'secret' : null))!
-    expect(result.skipped).toEqual([{ name: 'PG', driver: 'POSTGRESQL' }])
+    expect(result.skipped).toEqual([{ name: 'PG', driver: 'ORACLE' }])
     expect(result.connections[0]).toMatchObject({ name: 'Main', username: 'u', hasPassword: true })
     expect(result.logins['navicat-0']!.connection).toEqual({ user: 'u', password: 'secret' })
   })

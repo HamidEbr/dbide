@@ -1,3 +1,4 @@
+import type { SqlDialect } from '@shared/dialect'
 import { buildEditStatements, type RowChange, type TableDescription } from '@shared/edit'
 import type { ColumnInfo } from '@shared/driver'
 import type { Cell } from '@shared/query'
@@ -20,6 +21,7 @@ export function generateStatements(
   columns: readonly ColumnInfo[],
   rows: readonly (readonly (Cell | undefined)[])[],
   selected: readonly number[],
+  dialect: SqlDialect = 'mysql',
 ): Generated {
   if (table.primaryKey.length === 0) {
     return {
@@ -59,6 +61,10 @@ export function generateStatements(
   })
   if (changes.length === 0) return { ok: false, message: 'Select some rows first.' }
 
-  const built = buildEditStatements({ schema: table.schema, table: table.table, changes }, types)
+  const built = buildEditStatements(
+    { schema: table.schema, table: table.table, changes },
+    types,
+    dialect,
+  )
   return { ok: true, statements: built.map((s) => `${s.preview};`) }
 }

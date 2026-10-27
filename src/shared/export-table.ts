@@ -15,21 +15,31 @@ export interface TableExport {
   limit: number | null
 }
 
-/** A name quoted for MySQL, so a name with spaces, dashes or a keyword in it still works. */
-export const quoteIdentifier = (name: string): string => `\`${name.replace(/`/g, '``')}\``
+import { dialectInfo, type SqlDialect } from './dialect'
+
+/** A name quoted for the server, so a name with spaces, dashes or a keyword in it still works. */
+export const quoteIdentifier = (name: string, dialect: SqlDialect = 'mysql'): string =>
+  dialectInfo(dialect).quote(name)
 
 /** The SELECT that reads the table. All columns are written as `*`, so a table that gains one still exports whole. */
-export function buildTableSelect(source: TableExport, allColumns: readonly string[]): string {
+export function buildTableSelect(
+  source: TableExport,
+  allColumns: readonly string[],
+  dialect: SqlDialect = 'mysql',
+): string {
   const everything =
     source.columns === null ||
     (source.columns.length === allColumns.length &&
       allColumns.every((name) => source.columns!.includes(name)))
-  const list = everything ? '*' : source.columns!.map(quoteIdentifier).join(', ')
-  const from = `${quoteIdentifier(source.schema)}.${quoteIdentifier(source.table)}`
-  let sql = `SELECT ${list}\nFROM ${from}`
+  const list = everything ? '*' : source.columns!.map((c) => quoteIdentifier(c, dialect)).join(', ')
+  const from = dialectInfo(dialect).qualified(source.schema, source.table)
+  const rows = source.limit === null ? null : Math.max(0, Math.floor(source.limit))
+  // SQL Server has no LIMIT: the count goes after SELECT.
+  const top = dialect === 'mssql' && rows !== null ? `TOP (${rows}) ` : ''
+  let sql = `SELECT ${top}${list}\nFROM ${from}`
   const condition = source.where.trim()
   // On their own lines, so a comment at the end of the condition can't swallow the bracket or the LIMIT.
   if (condition !== '') sql += `\nWHERE (\n${condition}\n)`
-  if (source.limit !== null) sql += `\nLIMIT ${Math.max(0, Math.floor(source.limit))}`
+  if (rows !== null && dialect !== 'mssql') sql += `\nLIMIT ${rows}`
   return sql
 }

@@ -5,7 +5,7 @@ import { EngineIcon, EnvDot, Kbd } from '@/components/ui'
 import { engineName, useData } from '@/state/data'
 import { workbench } from '@/state/workbench'
 
-const START_ENGINES: EngineKind[] = ['mysql', 'mongodb', 'redis', 'rabbitmq']
+const START_ENGINES: EngineKind[] = ['mysql', 'postgresql', 'mssql', 'mongodb', 'redis', 'rabbitmq']
 
 export function Welcome() {
   const connections = useData((state) => state.connections)

@@ -87,7 +87,7 @@ describe('parseConnectionUri', () => {
     expect(parseConnectionUri('  redis://h  ')?.host).toBe('h')
   })
 
-  it.each(['', 'hello', 'http://example.com', 'mysql://', 'postgres://h/db'])(
+  it.each(['', 'hello', 'http://example.com', 'mysql://', 'oracle://h/db'])(
     'rejects %j',
     (input) => {
       expect(parseConnectionUri(input)).toBeNull()

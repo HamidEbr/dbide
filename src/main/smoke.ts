@@ -12,6 +12,10 @@ import {
   COMPLETION_1,
   TOOLS_1,
   DIAGRAM_1,
+  SCHEMA_COMPARE_1,
+  DESIGNER_1,
+  PARAMS_1,
+  BUILDER_1,
   EXPORT_1,
   FILES_1,
   GRID_COMMIT,
@@ -1014,6 +1018,10 @@ export async function runSmoke(window: BrowserWindow, shotsDir?: string): Promis
     await part('autocomplete', () => page(COMPLETION_1))
     await part('pivot, chart and compare', () => page(TOOLS_1))
     await part('the diagram', () => page(DIAGRAM_1))
+    await part('schema compare', () => page(SCHEMA_COMPARE_1))
+    await part('the table designer', () => page(DESIGNER_1))
+    await part('query parameters', () => page(PARAMS_1))
+    await part('the query builder', () => page(BUILDER_1))
     const exported = await part('export', () => page(EXPORT_1))
     await part('files on disk', () => ({
       checks: verifyFiles(dirs, {

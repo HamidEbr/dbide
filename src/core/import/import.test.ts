@@ -95,6 +95,7 @@ describe('importRows', () => {
     ],
     emptyAsNull: true,
     skipDuplicates: false,
+    dialect: 'mysql' as const,
     signal: new AbortController().signal,
   }
 
@@ -133,6 +134,31 @@ describe('importRows', () => {
       'CREATE TABLE `shop`.`items` (\n  `id` BIGINT NULL,\n  `name` VARCHAR(50) NULL\n)',
     )
     expect(seen.filter((s) => s.startsWith('INSERT IGNORE INTO')).length).toBe(2)
+  })
+
+  it('writes names and values the way PostgreSQL and SQL Server expect', async () => {
+    const pg: string[] = []
+    await importRows({
+      ...base,
+      dialect: 'postgresql',
+      skipDuplicates: true,
+      session: server(pg),
+      records: records([['1', 'a\\b']]),
+    })
+    expect(pg).toEqual([
+      'BEGIN',
+      'INSERT INTO "shop"."items" ("id", "name") VALUES\n(\'1\', \'a\\b\')\nON CONFLICT DO NOTHING',
+      'COMMIT',
+    ])
+    const ms: string[] = []
+    await importRows({
+      ...base,
+      dialect: 'mssql',
+      session: server(ms),
+      records: records([['1', 'é']]),
+    })
+    expect(ms[0]).toBe('BEGIN TRANSACTION')
+    expect(ms[1]).toBe("INSERT INTO [shop].[items] ([id], [name]) VALUES\n(N'1', N'é')")
   })
 
   it('rolls back when a statement fails', async () => {

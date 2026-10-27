@@ -30,8 +30,8 @@ const file = JSON.stringify({
       configuration: { type: 'test' },
     },
     'pg-1': {
-      provider: 'postgresql',
-      driver: 'postgres-jdbc',
+      provider: 'oracle',
+      driver: 'oracle-thin',
       name: 'Warehouse',
       configuration: {},
     },
@@ -42,7 +42,7 @@ const file = JSON.stringify({
 describe('parseDataSources', () => {
   it('reads the connections DBIDE can open, and lists the rest', () => {
     const parsed = parseDataSources(file)!
-    expect(parsed.skipped).toEqual([{ name: 'Warehouse', driver: 'postgres-jdbc' }])
+    expect(parsed.skipped).toEqual([{ name: 'Warehouse', driver: 'oracle-thin' }])
     const [shop, cache] = parsed.connections
     expect(shop).toMatchObject({
       sourceId: 'mysql8-1',

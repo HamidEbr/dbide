@@ -20,6 +20,14 @@ import { TestResults } from './TestResults'
 
 const DATABASE_LABEL: Record<EngineKind, { label: string; hint: string }> = {
   mysql: { label: 'Database', hint: 'Optional. The schema selected after login.' },
+  postgresql: {
+    label: 'Database',
+    hint: 'The database to connect to. The tree then lists its schemas.',
+  },
+  mssql: {
+    label: 'Database',
+    hint: 'The database to connect to. The tree then lists its schemas, such as dbo.',
+  },
   mongodb: { label: 'Default database', hint: 'Optional. Also used as the auth database.' },
   redis: {
     label: 'Database index',

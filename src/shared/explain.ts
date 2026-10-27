@@ -150,6 +150,43 @@ function walk(node: Json, depth: number, steps: PlanStep[]): void {
   }
 }
 
+function postgresNode(node: Json, depth: number, steps: PlanStep[]): void {
+  const type = typeof node['Node Type'] === 'string' ? node['Node Type'] : 'Step'
+  const relation = typeof node['Relation Name'] === 'string' ? node['Relation Name'] : null
+  const rows = num(node['Plan Rows'])
+  const warnings: PlanWarning[] = []
+  if (type === 'Seq Scan' && rows !== undefined && rows >= 1000) warnings.push('full-scan')
+  if (/^Sort$|Incremental Sort/.test(type) && node['Sort Space Type'] === 'Disk')
+    warnings.push('filesort')
+  const index = typeof node['Index Name'] === 'string' ? node['Index Name'] : undefined
+  const condition = [
+    'Index Cond',
+    'Filter',
+    'Hash Cond',
+    'Merge Cond',
+    'Join Filter',
+    'Recheck Cond',
+  ]
+    .map((k) => node[k])
+    .find((v): v is string => typeof v === 'string')
+  const alias =
+    typeof node['Alias'] === 'string' && node['Alias'] !== relation ? ` ${node['Alias']}` : ''
+  steps.push({
+    depth,
+    kind: relation ? 'table' : 'operation',
+    title: relation ? `${relation}${alias}` : type,
+    ...(relation ? { access: type } : {}),
+    ...(index ? { key: index } : {}),
+    ...(rows !== undefined ? { rowsExamined: rows } : {}),
+    ...(num(node['Total Cost']) !== undefined ? { cost: num(node['Total Cost'])! } : {}),
+    ...(condition ? { condition } : {}),
+    warnings,
+  })
+  if (Array.isArray(node.Plans)) {
+    for (const child of node.Plans) if (isObject(child)) postgresNode(child, depth + 1, steps)
+  }
+}
+
 /** The plan in a server's `EXPLAIN FORMAT=JSON` text, or null when it isn't one. */
 export function parsePlan(text: string): Plan | null {
   let parsed: unknown
@@ -157,6 +194,12 @@ export function parsePlan(text: string): Plan | null {
     parsed = JSON.parse(text)
   } catch {
     return null
+  }
+  // PostgreSQL's plan is a list with one object holding the root node.
+  if (Array.isArray(parsed) && isObject(parsed[0]) && isObject(parsed[0].Plan)) {
+    const steps: PlanStep[] = []
+    postgresNode(parsed[0].Plan, 0, steps)
+    return { cost: num(parsed[0].Plan['Total Cost']) ?? null, steps }
   }
   if (!isObject(parsed) || !isObject(parsed.query_block)) return null
   const block = parsed.query_block

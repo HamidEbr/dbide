@@ -1,8 +1,19 @@
 import type { Environment } from './environment'
 
-export type EngineKind = 'mysql' | 'mongodb' | 'redis' | 'rabbitmq'
+export type EngineKind = 'mysql' | 'postgresql' | 'mssql' | 'mongodb' | 'redis' | 'rabbitmq'
 
-export const ENGINES: readonly EngineKind[] = ['mysql', 'mongodb', 'redis', 'rabbitmq']
+export const ENGINES: readonly EngineKind[] = [
+  'mysql',
+  'postgresql',
+  'mssql',
+  'mongodb',
+  'redis',
+  'rabbitmq',
+]
+
+/** The engines that speak SQL, and so share the script editor, the results grid and the SQL tools. */
+export const SQL_ENGINES: readonly EngineKind[] = ['mysql', 'postgresql', 'mssql']
+export const isSqlEngine = (engine: EngineKind): boolean => SQL_ENGINES.includes(engine)
 
 export interface TlsConfig {
   enabled: boolean
@@ -62,6 +73,8 @@ export function emptyTls(): TlsConfig {
 export function newConnectionDraft(engine: EngineKind, id: string): ConnectionConfig {
   const defaults: Record<EngineKind, { port: number; database?: string; username?: string }> = {
     mysql: { port: 3306, username: 'root' },
+    postgresql: { port: 5432, username: 'postgres', database: 'postgres' },
+    mssql: { port: 1433, username: 'sa' },
     mongodb: { port: 27017 },
     redis: { port: 6379, database: '0' },
     rabbitmq: { port: 5672, database: '/', username: 'guest' },
