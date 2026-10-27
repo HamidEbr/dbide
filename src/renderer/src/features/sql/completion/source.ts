@@ -71,12 +71,18 @@ function writeOver(
   analysis: { quoted: boolean; from: number },
   insert: string,
   start?: number | null,
+  /** A second change, earlier in the script, such as an alias after a table name. */
+  also?: { at: number; insert: string },
 ): void {
   const begin = start ?? (analysis.quoted ? from - 1 : from)
   const end = view.state.sliceDoc(to, to + 1) === '`' && analysis.quoted ? to + 1 : to
+  const early = also && also.at <= begin ? also : undefined
   view.dispatch({
-    changes: { from: begin, to: end, insert },
-    selection: { anchor: begin + insert.length },
+    changes: [
+      ...(early ? [{ from: early.at, insert: early.insert }] : []),
+      { from: begin, to: end, insert },
+    ],
+    selection: { anchor: begin + insert.length + (early ? early.insert.length : 0) },
   })
 }
 
@@ -111,6 +117,8 @@ interface Write {
   typed: { quoted: boolean; from: number }
   /** What qualifies a column (an alias or table name), or null to write the column alone. */
   prefix?: string | null
+  /** A table with no alias yet gets this one written after its name, so the column can use it. */
+  alias?: { at: number; name: string } | null
 }
 
 function columnOptions(
@@ -132,6 +140,8 @@ function columnOptions(
             to,
             write.typed,
             `${write.prefix ? `${quoted(write.prefix)}.` : ''}${quoted(column.name)}`,
+            undefined,
+            write.alias ? { at: write.alias.at, insert: ` ${write.alias.name}` } : undefined,
           )
       : quoteIfNeeded(column.name),
     // Keys first: they are what joins and filters usually use.
@@ -327,14 +337,27 @@ async function optionsFor(
     return target ? columnOptions(target, null, foreign, { full, typed }) : null
   }
 
+  const taken = new Set(
+    resolved.flatMap((r) => [
+      r.ref.table.toLowerCase(),
+      ...(r.ref.alias ? [r.ref.alias.toLowerCase()] : []),
+    ]),
+  )
   const options: Completion[] = []
   if (analysis.clause === 'on') options.push(...joinOptions(resolved, { full, typed }))
   const many = resolved.length > 1
   for (const { ref, table } of resolved) {
     if (!table) continue
-    const owner = ref.alias ?? ref.table
+    // A table without an alias gets one now, so the statement reads `c`.`id` rather than `Cities`.`id`.
+    const give =
+      full && analysis.aliasable && !ref.alias && ref.nameEnd < analysis.from
+        ? suggestAlias(ref.table, taken)
+        : null
+    if (give) taken.add(give.toLowerCase())
+    const owner = give ?? ref.alias ?? ref.table
+    const alias = give ? { at: ref.nameEnd, name: give } : null
     options.push(
-      ...columnOptions(table, many ? owner : null, foreign, { full, typed, prefix: owner }),
+      ...columnOptions(table, many ? owner : null, foreign, { full, typed, prefix: owner, alias }),
     )
     // The alias or table name itself, so `o` can become `o.` and go on to its columns.
     if (many || ref.alias) {

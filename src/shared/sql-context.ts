@@ -11,6 +11,8 @@ export interface TableRef {
   database: string | null
   table: string
   alias: string | null
+  /** Where the table's name ends in the script, which is where an alias would go. */
+  nameEnd: number
 }
 
 export type Clause = 'select' | 'where' | 'on' | 'group' | 'having' | 'set' | 'using' | 'insert'
@@ -47,6 +49,8 @@ export type SqlContext =
       qualifier: string | null
       qualifierDatabase: string | null
       tables: TableRef[]
+      /** Whether a table the statement reads can be given an alias (not in DELETE FROM). */
+      aliasable: boolean
     } & Typed)
   /** Somewhere a keyword or function goes. */
   | ({ kind: 'keyword'; atStart: boolean } & Typed)
@@ -161,6 +165,7 @@ function readRef(tokens: Token[], i: number): { ref: TableRef; next: number } | 
     table = second.type === 'quoted' ? second.value : second.text
     next += 2
   }
+  const nameEnd = tokens[next - 1]!.end
   let alias: string | null = null
   if (tokens[next]?.type === 'word' && tokens[next]!.value === 'AS' && isName(tokens[next + 1])) {
     alias = tokens[next + 1]!.type === 'quoted' ? tokens[next + 1]!.value : tokens[next + 1]!.text
@@ -169,7 +174,7 @@ function readRef(tokens: Token[], i: number): { ref: TableRef; next: number } | 
     alias = tokens[next]!.type === 'quoted' ? tokens[next]!.value : tokens[next]!.text
     next += 1
   }
-  return { ref: { database, table, alias }, next }
+  return { ref: { database, table, alias, nameEnd }, next }
 }
 
 /** Every table the statement reads or writes, wherever the cursor is in it. */
@@ -277,7 +282,7 @@ export function analyzeSql(script: string, offset: number): SqlContext {
   const tokens = tokenize(text)
   // The tokens before the name being typed, which say what kind of name it is.
   const earlier = tokens.filter((t) => t.end <= head.length)
-  const refs = tableRefs(tokens)
+  const refs = tableRefs(tokens).map((r) => ({ ...r, nameEnd: base + r.nameEnd }))
   const takenNames = refs.flatMap((r) => [
     r.table.toLowerCase(),
     ...(r.alias ? [r.alias.toLowerCase()] : []),
@@ -381,7 +386,15 @@ export function analyzeSql(script: string, offset: number): SqlContext {
       // `SET` in `SET NAMES utf8` or `SET @x = 1` is not an UPDATE's SET.
       if (clause === 'set' && refs.length === 0) return { kind: 'none' }
       // BY only means columns after GROUP or ORDER (PARTITION BY too).
-      return { kind: 'column', clause, qualifier, qualifierDatabase, tables: refs, ...typed }
+      return {
+        kind: 'column',
+        clause,
+        qualifier,
+        qualifierDatabase,
+        tables: refs,
+        aliasable: earlier[0]?.value !== 'DELETE',
+        ...typed,
+      }
     }
     if (['LIMIT', 'OFFSET', 'VALUES', 'VALUE', 'AS', 'LIKE'].includes(t.value))
       return { kind: 'none' }

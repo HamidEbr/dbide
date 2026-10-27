@@ -478,8 +478,12 @@ describe('names in full', () => {
     expect(await choose('SELECT * FROM shop.orders o WHERE tot|', 'total')).toBe(
       'SELECT * FROM shop.orders o WHERE `o`.`total`|',
     )
+    // A table with no alias gets one, so the statement reads `o`.`total`.
     expect(await choose('SELECT * FROM shop.orders WHERE tot|', 'total')).toBe(
-      'SELECT * FROM shop.orders WHERE `orders`.`total`|',
+      'SELECT * FROM shop.orders o WHERE `o`.`total`|',
+    )
+    expect(await choose('DELETE FROM shop.orders WHERE tot|', 'total')).toBe(
+      'DELETE FROM shop.orders WHERE `orders`.`total`|',
     )
   })
 
