@@ -1,15 +1,25 @@
+import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
+import { basename } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { CoreEvents, type CoreApi } from '@shared/api'
 import {
   secretKey,
   summarize,
   type ConnectionConfig,
+  type ConnectionSummary,
   type ConnectionSecrets,
   type SecretName,
 } from '@shared/connection'
 import { ENVIRONMENT_POLICIES } from '@shared/environment'
 import { exportFormat } from '@shared/export'
+import { CONNECTION_SOURCES, type ConnectionSource } from '@shared/connection-sources'
+import {
+  IMPORT_FORMATS,
+  inferColumnType,
+  type ImportFormat,
+  type ImportSource,
+} from '@shared/import'
 import type { DriverSession } from '@shared/driver'
 import { RpcError, type HandlerContext, type RpcHandlers } from '@shared/rpc'
 import { DOCUMENT_RESIDENT_ROWS } from '@shared/mongo/documents'
@@ -17,6 +27,10 @@ import { describeCommand, isReadSafe, tokenize } from '@shared/redis/command'
 import { scriptLanguageOf } from '@shared/scripts'
 import { classifyStatement, maskSql, splitStatements } from '@shared/sql'
 import type { DriverRegistry } from './drivers/registry'
+import { defaultSourcePath, readConnections } from './dbeaver/sources'
+import { dumpDatabase } from './export/dump'
+import { openRecords } from './import/records'
+import { importRows } from './import/run'
 import { exportQuery, fileSink } from './export/export-query'
 import { RunRecorder } from './history/recorder'
 import { HistoryStore } from './history/store'
@@ -55,6 +69,7 @@ import {
   validatePublish,
   validateUnbind,
   validateEditBatch,
+  validateDumpParams,
   validateExportParams,
   validateHistoryQuery,
   validateNewScript,
@@ -69,6 +84,26 @@ import {
   validateFetch,
   validateStats,
 } from './validate'
+
+/** Rows read for the preview and for guessing column types, and how many of them the preview shows. */
+const INFERENCE_ROWS = 2000
+const PREVIEW_ROWS = 20
+
+/** The file and how to read it, checked. */
+function validateImportInput(input: unknown): { path: string; source: ImportSource } {
+  const { path, source } = (input ?? {}) as { path?: unknown; source?: Partial<ImportSource> }
+  if (typeof path !== 'string' || path === '') throw new RpcError('INVALID_INPUT', 'Choose a file.')
+  if (!source || !IMPORT_FORMATS.includes(source.format as ImportFormat)) {
+    throw new RpcError('INVALID_INPUT', 'Unknown file format.')
+  }
+  const delimiter = source.delimiter ?? ','
+  if (![',', ';', '\t', '|'].includes(delimiter))
+    throw new RpcError('INVALID_INPUT', 'Unknown separator.')
+  return {
+    path,
+    source: { format: source.format!, delimiter, header: source.header !== false },
+  }
+}
 
 const SECRET_NAMES: readonly SecretName[] = ['password', 'sshPassword', 'sshPassphrase']
 
@@ -105,6 +140,10 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
   const history = new HistoryStore(deps.db)
   /** Files this process wrote for an export, so "show in folder" can only point at those. */
   const exportedFiles = new Set<string>()
+  /** Files the user chose to import, which are the only ones an import may read. */
+  const importFiles = new Set<string>()
+  /** Connection files this process read (source and path), the only ones an import may be made from. */
+  const importSourcePaths = new Set<string>()
 
   // Many statements can finish in a burst; windows hear about them once.
   let historyTimer: ReturnType<typeof setTimeout> | undefined
@@ -335,6 +374,118 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
       await closeSessionsOf(config.id)
       deps.notify(CoreEvents.connectionsChanged)
       return summarize(config)
+    },
+
+    'connectionImport.scan': async (input) => {
+      const { source, choose, text } = (input ?? {}) as {
+        source?: ConnectionSource
+        choose?: boolean
+        text?: string
+      }
+      const info = CONNECTION_SOURCES.find((s) => s.value === source)
+      if (!info) throw new RpcError('INVALID_INPUT', 'Unknown source.')
+      if (info.input === 'text' && (typeof text !== 'string' || text.length > 200_000)) {
+        throw new RpcError('INVALID_INPUT', 'Paste the connection URLs.')
+      }
+      let path: string | null = null
+      if (info.input === 'file') {
+        if (choose === true) {
+          ;[path = null] = await files.chooseOpenPaths({
+            filterName: `${info.label} connections`,
+            extensions: info.extensions,
+          })
+        } else {
+          path = defaultSourcePath(info.value)
+        }
+      }
+      const none = { path: null, connections: [], skipped: [], hasCredentials: false }
+      if (info.input === 'file' && path === null) return none
+      const read = await readConnections(info.value, { path, text })
+      if (!read) return none
+      if (path !== null) importSourcePaths.add(`${info.value}\0${path}`)
+      return {
+        path,
+        connections: read.connections.map((c) => ({
+          ...c,
+          username: read.logins[c.sourceId]?.connection?.user || c.username,
+          ssh: c.ssh
+            ? { ...c.ssh, username: read.logins[c.sourceId]?.ssh?.user || c.ssh.username }
+            : null,
+        })),
+        skipped: read.skipped,
+        hasCredentials: read.hasCredentials,
+      }
+    },
+
+    'connectionImport.run': async (input) => {
+      const { source, path, text, ids, passwords } = (input ?? {}) as Record<string, unknown>
+      const info = CONNECTION_SOURCES.find((s) => s.value === source)
+      if (!info) throw new RpcError('INVALID_INPUT', 'Unknown source.')
+      if (
+        info.input === 'file' &&
+        (typeof path !== 'string' || !importSourcePaths.has(`${info.value}\0${path}`))
+      ) {
+        throw new RpcError('INVALID_INPUT', 'Look for the connections first.')
+      }
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+        throw new RpcError('INVALID_INPUT', 'Choose which connections to import.')
+      }
+      const read = await readConnections(info.value, {
+        path: typeof path === 'string' ? path : null,
+        text: typeof text === 'string' ? text : '',
+      })
+      if (!read) throw new RpcError('NOT_FOUND', 'Those connections can’t be read any more.')
+      const chosen = new Set(ids as string[])
+      const taken = new Set(connections.list().map((c) => c.name.toLowerCase()))
+      const imported: ConnectionSummary[] = []
+      for (const source of read.connections.filter((c) => chosen.has(c.sourceId))) {
+        const login = read.logins[source.sourceId]
+        let name = source.name
+        for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${source.name} (${n})`
+        taken.add(name.toLowerCase())
+        const id = randomUUID()
+        const ssh = source.ssh
+        const config = validateConnectionConfig({
+          id,
+          name,
+          engine: source.engine,
+          environment: source.environment,
+          ...(source.folder ? { folder: source.folder } : {}),
+          host: source.host,
+          port: source.port,
+          ...(login?.connection?.user || source.username
+            ? { username: login?.connection?.user || source.username }
+            : {}),
+          ...(source.database ? { database: source.database } : {}),
+          tls: { enabled: source.tls, allowInvalidCertificates: false },
+          ...(ssh
+            ? {
+                ssh: {
+                  enabled: true,
+                  host: ssh.host,
+                  port: ssh.port,
+                  username: login?.ssh?.user || ssh.username,
+                  auth: ssh.auth,
+                  ...(ssh.keyPath ? { privateKeyPath: ssh.keyPath } : {}),
+                },
+              }
+            : {}),
+          options: {},
+        })
+        const typed: ConnectionSecrets = {}
+        if (passwords === true) {
+          if (login?.connection?.password) typed.password = login.connection.password
+          if (ssh?.auth === 'password' && login?.ssh?.password)
+            typed.sshPassword = login.ssh.password
+        }
+        const toStore = SECRET_NAMES.filter((n) => (typed[n] ?? '') !== '')
+        if (toStore.length > 0) await requireSecretStore()
+        for (const n of toStore) await secrets.set(secretKey(config.id, n), typed[n]!)
+        connections.save(config)
+        imported.push(summarize(config))
+      }
+      deps.notify(CoreEvents.connectionsChanged)
+      return { imported }
     },
 
     'connections.delete': async ({ id }) => {
@@ -1028,6 +1179,254 @@ export function createCoreHandlers(deps: CoreDeps): RpcHandlers<CoreApi> {
           // A compressed file is smaller than the text that went into it; the size shown is the file's.
           bytes: params.compress ? (await stat(path)).size : bytes,
           durationMs: Math.round(performance.now() - startedAt),
+        }
+      } catch (error) {
+        await sink.abort()
+        throw error
+      } finally {
+        await session.close()
+      }
+    },
+
+    'import.choose': async () => {
+      const [path] = await files.chooseOpenPaths({
+        filterName: 'CSV, TSV or JSON',
+        extensions: ['csv', 'tsv', 'tab', 'txt', 'json', 'ndjson', 'jsonl'],
+      })
+      if (!path) return null
+      importFiles.add(path)
+      return { path, name: basename(path), size: (await stat(path)).size }
+    },
+
+    'import.preview': async (input) => {
+      const { path, source } = validateImportInput(input)
+      if (!importFiles.has(path)) throw new RpcError('INVALID_INPUT', 'Choose the file first.')
+      const records = await openRecords(path, source)
+      const rows: (string | null)[][] = []
+      let more = false
+      for await (const row of records.rows()) {
+        if (rows.length >= INFERENCE_ROWS) {
+          more = true
+          break
+        }
+        rows.push(row)
+      }
+      return {
+        columns: records.columns,
+        rows: rows.slice(0, PREVIEW_ROWS),
+        types: records.columns.map((_, i) => inferColumnType(rows.map((r) => r[i] ?? null))),
+        sampled: rows.length,
+        more,
+      }
+    },
+
+    'import.run': async (input, ctx) => {
+      const params = (input ?? {}) as Record<string, unknown>
+      const { path, source } = validateImportInput(input)
+      if (!importFiles.has(path)) throw new RpcError('INVALID_INPUT', 'Choose the file first.')
+      const { importId, connectionId, database, table } = params
+      if (
+        typeof importId !== 'string' ||
+        typeof connectionId !== 'string' ||
+        typeof database !== 'string' ||
+        typeof table !== 'string' ||
+        table === '' ||
+        database === ''
+      ) {
+        throw new RpcError('INVALID_INPUT', 'Choose a database and a table.')
+      }
+      const create = params.create === null || params.create === undefined ? null : params.create
+      const validName = (n: unknown): n is string =>
+        typeof n === 'string' && n !== '' && n.length <= 64
+      if (
+        create !== null &&
+        (!Array.isArray(create) ||
+          create.length === 0 ||
+          create.some(
+            (c) =>
+              !validName((c as { name?: unknown }).name) ||
+              typeof (c as { type?: unknown }).type !== 'string' ||
+              !/^[A-Za-z]+(\(\d+(,\d+)?\))?$/.test((c as { type: string }).type),
+          ))
+      ) {
+        throw new RpcError('INVALID_INPUT', 'The new table’s columns are not valid.')
+      }
+      const mapping = params.mapping
+      if (
+        !Array.isArray(mapping) ||
+        mapping.length === 0 ||
+        mapping.some(
+          (m) =>
+            !Number.isInteger((m as { source?: unknown }).source) ||
+            !validName((m as { target?: unknown }).target),
+        )
+      ) {
+        throw new RpcError(
+          'INVALID_INPUT',
+          'Match at least one column of the file to a column of the table.',
+        )
+      }
+      const { config, secrets: saved } = await loadConnection(connectionId)
+      if (config.engine !== 'mysql') {
+        throw new RpcError('UNSUPPORTED', 'Only a MySQL table can be imported into.')
+      }
+      if (ENVIRONMENT_POLICIES[config.environment].readOnlyByDefault && params.confirmed !== true) {
+        throw new RpcError(
+          'FORBIDDEN',
+          `${config.name} is a ${ENVIRONMENT_POLICIES[config.environment].label.toLowerCase()} connection. Confirm that rows may be added to it.`,
+        )
+      }
+      const records = await openRecords(path, source)
+      const startedAt = performance.now()
+      const session = await drivers.get(config.engine).connect({
+        config,
+        secrets: saved,
+        endpoint: { host: config.host, port: config.port },
+        readOnly: false,
+        signal: ctx.signal,
+      })
+      try {
+        const { rows } = await importRows({
+          session,
+          database,
+          table,
+          create: create as { name: string; type: string }[] | null,
+          mapping: mapping as { source: number; target: string }[],
+          records,
+          emptyAsNull: params.emptyAsNull === true,
+          skipDuplicates: params.skipDuplicates === true,
+          signal: ctx.signal,
+          onProgress: (done) => ctx.emit(CoreEvents.importProgress, { importId, rows: done }),
+        })
+        return { rows, durationMs: Math.round(performance.now() - startedAt) }
+      } finally {
+        await session.close()
+      }
+    },
+
+    'query.explain': async (input, ctx) => {
+      const params = (input ?? {}) as Record<string, unknown>
+      if (typeof params.connectionId !== 'string' || typeof params.sql !== 'string') {
+        throw new RpcError('INVALID_INPUT', 'Pick a connection and a statement.')
+      }
+      const database = typeof params.database === 'string' ? params.database : null
+      const analyze = params.analyze === true
+      const statements = splitStatements(params.sql)
+      if (statements.length !== 1) {
+        throw new RpcError('INVALID_INPUT', 'Explain one statement at a time.')
+      }
+      const sql = statements[0]!.text
+      // A plan of a change shows the same steps without running it; running one to time it is not allowed.
+      const kind = classifyStatement(sql).kind
+      if (kind !== 'read' && (analyze || kind !== 'write')) {
+        throw new RpcError(
+          'NOT_A_QUERY',
+          analyze
+            ? 'Only a query that reads data can be run to be timed.'
+            : 'Only a query, or an INSERT, UPDATE or DELETE, has a plan.',
+        )
+      }
+      if (/^\s*EXPLAIN\b/i.test(sql)) {
+        throw new RpcError('INVALID_INPUT', 'That statement is already an EXPLAIN.')
+      }
+      const { config, secrets: saved } = await loadConnection(params.connectionId)
+      if (config.engine !== 'mysql') {
+        throw new RpcError('UNSUPPORTED', 'Only MySQL can show a query plan.')
+      }
+      const session = await drivers.get(config.engine).connect({
+        config,
+        secrets: saved,
+        endpoint: { host: config.host, port: config.port },
+        readOnly: true,
+        signal: ctx.signal,
+      })
+      const first = async (text: string): Promise<string | null> => {
+        const results = session.execute(
+          { text, ...(database ? { target: database } : {}) },
+          ctx.signal,
+        )
+        const iterator = results[Symbol.asyncIterator]()
+        try {
+          for (;;) {
+            const next = await iterator.next()
+            if (next.done) return null
+            if (next.value.kind === 'rows') {
+              const cell = next.value.rows[0]?.[0]
+              return cell instanceof Uint8Array
+                ? new TextDecoder().decode(cell)
+                : cell === null || cell === undefined
+                  ? null
+                  : String(cell)
+            }
+          }
+        } finally {
+          await iterator.return?.().catch(() => undefined)
+        }
+      }
+      try {
+        return analyze
+          ? { json: null, text: await first(`EXPLAIN ANALYZE ${sql}`) }
+          : { json: await first(`EXPLAIN FORMAT=JSON ${sql}`), text: null }
+      } finally {
+        await session.close()
+      }
+    },
+
+    'export.dump': async (input, ctx) => {
+      const params = validateDumpParams(input)
+      const { config, secrets: saved } = await loadConnection(params.connectionId)
+      if (config.engine !== 'mysql') {
+        throw new RpcError('UNSUPPORTED', 'Only a MySQL database can be written as a SQL file.')
+      }
+      const path = await files.chooseSavePath({
+        defaultName: params.compress ? `${params.fileName}.gz` : params.fileName,
+        filterName: params.compress ? 'SQL, gzipped' : 'SQL file',
+        extension: params.compress ? 'gz' : 'sql',
+      })
+      ctx.signal.throwIfAborted()
+      if (path === null) return { status: 'dismissed' }
+
+      const startedAt = performance.now()
+      const session = await drivers.get(config.engine).connect({
+        config,
+        secrets: saved,
+        endpoint: { host: config.host, port: config.port },
+        readOnly: true,
+        signal: ctx.signal,
+      })
+      const sink = fileSink(path, { gzip: params.compress })
+      try {
+        const detail = await session.schemaDetail?.(params.database, ctx.signal)
+        if (!detail) throw new RpcError('UNSUPPORTED', 'This connection can’t list its tables.')
+        const wanted = params.tables ? new Set(params.tables) : null
+        const tables = detail.tables
+          .filter((t) => !wanted || wanted.has(t.name))
+          .map((t) => ({ name: t.name, view: t.view }))
+        if (wanted && tables.length !== wanted.size) {
+          throw new RpcError('NOT_FOUND', 'One of the tables is not in that database any more.')
+        }
+        const done = await dumpDatabase({
+          session,
+          database: params.database,
+          tables,
+          structure: params.structure,
+          data: params.data,
+          drop: params.drop,
+          rowsPerInsert: params.rowsPerInsert,
+          sink,
+          signal: ctx.signal,
+          onProgress: (progress) =>
+            ctx.emit(CoreEvents.exportProgress, { exportId: params.exportId, ...progress }),
+        })
+        await sink.finish()
+        exportedFiles.add(path)
+        return {
+          status: 'saved',
+          path,
+          rows: done.rows,
+          bytes: params.compress ? (await stat(path)).size : done.bytes,
+          durationMs: Math.round(performance.now() - startedAt),
+          tables: done.tables,
         }
       } catch (error) {
         await sink.abort()

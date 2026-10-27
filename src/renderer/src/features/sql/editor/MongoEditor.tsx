@@ -26,6 +26,7 @@ import { statementAt } from '@shared/sql'
 import { formatShortcut } from '@/commands/keybinding'
 import { coreLink } from '@/ipc/link'
 import { mongoCompletionSource, type CompletionEnv } from '@/features/mongo/completion'
+import { snippetSource } from '../completion/snippets'
 import { notify } from '@/state/notices'
 import { useScripts } from '@/state/scripts'
 import { registerEditor } from './handles'
@@ -148,7 +149,10 @@ export function MongoEditor({ scriptId, connectionId, database, active }: MongoE
           closeBrackets(),
           javascript(),
           autocompletion({
-            override: [mongoCompletionSource(env, () => live.current.database)],
+            override: [
+              mongoCompletionSource(env, () => live.current.database),
+              snippetSource('mongo'),
+            ],
           }),
           mongoLinter,
           placeholder(

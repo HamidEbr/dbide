@@ -28,6 +28,7 @@ import { useData } from '@/state/data'
 import { useScripts } from '@/state/scripts'
 import { registerEditor } from './handles'
 import { schemaCache } from '../completion/schema-cache'
+import { snippetSource } from '../completion/snippets'
 import { sqlCompletionSource } from '../completion/source'
 import { editorTheme } from './theme'
 
@@ -100,6 +101,7 @@ export function SqlEditor({ scriptId, connectionId, database, active }: SqlEdito
                 cache: schemaCache,
                 fullPaths: () => useData.getState().settings.sqlFullPaths,
               }),
+              snippetSource('sql'),
               keywordSource,
             ],
           }),

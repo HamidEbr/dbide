@@ -30,18 +30,20 @@ export function fileSink(path: string, options: { gzip?: boolean } = {}): Export
     failure = error
   }
   file.on('error', fail)
+  let opened: Promise<void> | null = null
   if (options.gzip) {
     stream.on('error', fail)
     stream.pipe(file)
   }
 
   return {
+    // Asked once per query, and a dump asks once per table: the answer is the same every time.
     ready: () =>
-      new Promise<void>((resolve, reject) => {
+      (opened ??= new Promise<void>((resolve, reject) => {
         if (failure) return reject(failure)
         file.once('open', () => resolve())
         file.once('error', reject)
-      }),
+      })),
 
     write(chunk) {
       if (failure) return Promise.reject(failure)

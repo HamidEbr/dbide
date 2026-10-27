@@ -344,8 +344,10 @@ export function analyzeSql(script: string, offset: number): SqlContext {
                   : null,
                 table: tableText,
                 alias: null,
+                nameEnd: base + nameToken.end,
               },
             ],
+            aliasable: false,
             ...typed,
           }
         }

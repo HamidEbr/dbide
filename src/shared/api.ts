@@ -1,5 +1,8 @@
 import type { ConnectionConfig, ConnectionSecrets, ConnectionSummary, TestStep } from './connection'
 import type { DriverDescriptor, SchemaDetail, SessionInfo, TableColumns, TreeNode } from './driver'
+import type { ConnectionSource } from './connection-sources'
+import type { DbeaverConnection, DbeaverSkipped } from './dbeaver'
+import type { ImportPreview, ImportSource } from './import'
 import type { EditBatch, EditResult, TableDescription } from './edit'
 import type { ExportFormat, ExportOptions } from './export'
 import type { DocumentEditBatch, DocumentEditResult } from './mongo/documents'
@@ -66,6 +69,32 @@ export interface CoreApi {
   'connections.save': {
     params: { config: ConnectionConfig; secrets?: ConnectionSecrets }
     result: ConnectionSummary
+  }
+  /**
+   * Looks for DBeaver's connections: in its default folder, or in a file the user picks. Saved passwords stay in the
+   * core; the window only learns whether there are any.
+   */
+  'connectionImport.scan': {
+    params: { source: ConnectionSource; choose: boolean; text?: string }
+    result: {
+      /** The file or folder that was read, or null when none was found or the user cancelled. */
+      path: string | null
+      connections: DbeaverConnection[]
+      skipped: DbeaverSkipped[]
+      /** The saved logins could be read, so passwords can come over. */
+      hasCredentials: boolean
+    }
+  }
+  /** Brings the chosen connections over from what `connectionImport.scan` read. */
+  'connectionImport.run': {
+    params: {
+      source: ConnectionSource
+      path: string | null
+      text?: string
+      ids: string[]
+      passwords: boolean
+    }
+    result: { imported: ConnectionSummary[] }
   }
   'connections.delete': { params: { id: string }; result: void }
   'connections.test': {
@@ -294,6 +323,14 @@ export interface CoreApi {
   /** Closes the console's connection when its tab closes. */
   'redis.consoleClose': { params: { consoleId: string }; result: void }
 
+  /**
+   * Asks the server how it would run one statement, on a connection of its own that can't write. `json` is the
+   * server's `EXPLAIN FORMAT=JSON`; with `analyze` the statement really runs and `text` is the timed plan.
+   */
+  'query.explain': {
+    params: { connectionId: string; database: string | null; sql: string; analyze: boolean }
+    result: { json: string | null; text: string | null }
+  }
   /** Brings the script's server session in line with its lock, so a change takes effect at once. */
   'scripts.setReadOnly': { params: { scriptId: string; readOnly: boolean }; result: void }
   /** Closes the script's connection when its tab closes. */
@@ -375,6 +412,69 @@ export interface CoreApi {
       /** The user closed the save dialog without choosing a file. */
       | { status: 'dismissed' }
   }
+  /** A native open dialog for a file to import. Null when the user cancels. */
+  'import.choose': {
+    params: void
+    result: { path: string; name: string; size: number } | null
+  }
+  /** The columns and first rows of a file, and a type guessed for each column. */
+  'import.preview': {
+    params: { path: string; source: ImportSource }
+    result: ImportPreview
+  }
+  /**
+   * Writes the rows of a file into a table, in one transaction. Streams `import.progress` events; abort the call to
+   * cancel, which leaves the table as it was.
+   */
+  'import.run': {
+    params: {
+      importId: string
+      connectionId: string
+      database: string
+      path: string
+      source: ImportSource
+      table: string
+      /** Columns to create the table with, named for the file's columns and typed. Null writes to a table that exists. */
+      create: { name: string; type: string }[] | null
+      /** The file's columns by position, and the table's column each goes to. */
+      mapping: { source: number; target: string }[]
+      emptyAsNull: boolean
+      skipDuplicates: boolean
+      /** The person confirmed writing to a connection that is read-only by default. */
+      confirmed: boolean
+    }
+    result: { rows: number; durationMs: number }
+  }
+  /**
+   * Writes a database, or some of its tables, as one SQL file that recreates them. Streams `export.progress`
+   * events; abort the call to cancel.
+   */
+  'export.dump': {
+    params: {
+      exportId: string
+      connectionId: string
+      database: string
+      /** The tables and views to write, or null for all of them. */
+      tables: string[] | null
+      structure: boolean
+      data: boolean
+      /** DROP … IF EXISTS before each CREATE. */
+      drop: boolean
+      rowsPerInsert: number
+      compress: boolean
+      fileName: string
+    }
+    result:
+      | {
+          status: 'saved'
+          path: string
+          rows: number
+          bytes: number
+          durationMs: number
+          tables: number
+        }
+      | { status: 'dismissed' }
+  }
   /** Shows a file that an export wrote in the file manager. */
   'export.reveal': { params: { path: string }; result: void }
 }
@@ -408,11 +508,18 @@ export const CoreEvents = {
   historyChanged: 'history.changed',
   /** Progress of an export, sent to the window that started it. */
   exportProgress: 'export.progress',
+  /** Progress of an import, sent to the window that started it. */
+  importProgress: 'import.progress',
   /** Something the person should know about the server they are using. Sent to the window that caused it. */
   notice: 'notice',
   /** How far a Redis count or bulk delete has got, sent to the window that started it. */
   redisProgress: 'redis.progress',
 } as const
+
+export interface ImportProgress {
+  importId: string
+  rows: number
+}
 
 export interface ExportProgress {
   exportId: string

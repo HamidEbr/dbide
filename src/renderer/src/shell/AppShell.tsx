@@ -3,6 +3,10 @@ import { commands } from '@/commands/commands'
 import { Notices } from '@/components/Notices'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { Inspector } from '@/features/inspector/Inspector'
+import { DumpDialog } from '@/features/sql/export/DumpDialog'
+import { ConnectionImportDialog } from '@/features/connections/ConnectionImportDialog'
+import { ImportDialog } from '@/features/sql/import/ImportDialog'
+import { ExplainDialog } from '@/features/sql/ExplainDialog'
 import { ExportDialog } from '@/features/sql/export/ExportDialog'
 import { LocalHistoryDialog } from '@/features/sql/local-history/LocalHistoryDialog'
 import { RunGuardDialog } from '@/features/sql/RunGuardDialog'
@@ -74,6 +78,10 @@ export function AppShell() {
       <RunGuardDialog />
       <LocalHistoryDialog />
       <ExportDialog />
+      <DumpDialog />
+      <ExplainDialog />
+      <ImportDialog />
+      <ConnectionImportDialog />
       <Notices />
     </div>
   )

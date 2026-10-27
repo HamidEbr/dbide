@@ -1,3 +1,5 @@
+import type { Snippet } from './snippets'
+
 export type ThemeSetting = 'system' | 'light' | 'dark'
 export type Density = 'compact' | 'default' | 'comfortable'
 
@@ -15,6 +17,8 @@ export interface Settings {
   sqlFullPaths: boolean
   /** SQL autocomplete writes keywords and functions in capitals. */
   sqlUppercaseKeywords: boolean
+  /** The person's own snippets, which add to the built-in ones. */
+  snippets: Snippet[]
 }
 
 /** Row height in pixels per density. Mirrors --row-h in tokens.css; the grid needs the number. */
@@ -32,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   recordHistory: true,
   sqlFullPaths: true,
   sqlUppercaseKeywords: true,
+  snippets: [],
 }
 
 /** Background colors of the title-bar overlay, kept in step with `--bg-1` in tokens.css. */

@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RedisReply } from '@shared/redis/types'
-import { CommandHistory, completions, formatReply, hintFor, syntaxWords } from './console'
+import {
+  CommandHistory,
+  completions,
+  formatReply,
+  hintFor,
+  keyArgument,
+  keyText,
+  syntaxWords,
+} from './console'
 
 const bulk = (
   text: string,
@@ -193,5 +201,34 @@ describe('CommandHistory', () => {
     const history = new CommandHistory()
     history.push('x')
     expect(history.all()).toEqual(['x'])
+  })
+})
+
+describe('keyArgument', () => {
+  it('finds the key being typed, and where it starts', () => {
+    expect(keyArgument('GET us')).toEqual({ from: 4, prefix: 'us', quote: null })
+    expect(keyArgument('GET ')).toEqual({ from: 4, prefix: '', quote: null })
+    expect(keyArgument('GET "us')).toEqual({ from: 4, prefix: 'us', quote: '"' })
+    expect(keyArgument('RENAME a b')).toMatchObject({ from: 9, prefix: 'b' })
+    expect(keyArgument('rename a ne')).toMatchObject({ prefix: 'ne' })
+  })
+
+  it('is null on a command name, a value, or a key with escapes', () => {
+    expect(keyArgument('GE')).toBeNull()
+    expect(keyArgument('SET k va')).toBeNull()
+    expect(keyArgument('GET "a\\"')).toBeNull()
+  })
+
+  it('goes on to the next key of a command that takes several', () => {
+    expect(keyArgument('MGET a b')).toMatchObject({ from: 7, prefix: 'b' })
+  })
+})
+
+describe('keyText', () => {
+  it('quotes only what needs it', () => {
+    expect(keyText('user:1')).toBe('user:1')
+    expect(keyText('a b')).toBe('"a b"')
+    expect(keyText('say "hi"')).toBe('"say \\"hi\\""')
+    expect(keyText('plain', true)).toBe('"plain"')
   })
 })

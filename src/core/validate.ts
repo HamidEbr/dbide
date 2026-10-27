@@ -36,6 +36,7 @@ import {
 } from '@shared/scripts'
 import { RpcError } from '@shared/rpc'
 import { DEFAULT_SETTINGS, type Settings } from '@shared/settings'
+import { MAX_SNIPPETS, snippetProblem, type Snippet } from '@shared/snippets'
 
 function invalid(message: string): never {
   throw new RpcError('INVALID_INPUT', message)
@@ -152,6 +153,25 @@ export function validateSettingsPatch(input: unknown): Partial<Settings> {
     if (!(key in DEFAULT_SETTINGS)) invalid(`Unknown setting "${key}"`)
   }
   const { theme, density, navigatorOpen, inspectorOpen, recordHistory } = input
+  if (input.snippets !== undefined) {
+    if (!Array.isArray(input.snippets) || input.snippets.length > MAX_SNIPPETS) {
+      invalid(`snippets must be a list of at most ${MAX_SNIPPETS}`)
+    }
+    const seen = new Set<string>()
+    patch.snippets = input.snippets.map((item: unknown): Snippet => {
+      if (!isRecord(item)) invalid('A snippet must be an object')
+      const { trigger, name, body } = item
+      if (typeof trigger !== 'string' || typeof name !== 'string' || typeof body !== 'string') {
+        invalid('A snippet has a trigger, a name and a body')
+      }
+      const snippet = { trigger, name, body }
+      const problem = snippetProblem(snippet)
+      if (problem) invalid(problem)
+      if (seen.has(trigger.toLowerCase())) invalid(`Two snippets use the trigger "${trigger}"`)
+      seen.add(trigger.toLowerCase())
+      return snippet
+    })
+  }
   for (const key of ['sqlFullPaths', 'sqlUppercaseKeywords'] as const) {
     if (input[key] === undefined) continue
     if (typeof input[key] !== 'boolean') invalid(`${key} must be true or false`)
@@ -463,6 +483,58 @@ export function validateExportParams(input: unknown): ExportParams {
     format: format as ExportFormat,
     options: validateExportOptions(input.options),
     compress: input.compress === true && format !== 'xlsx',
+    fileName: fileName as string,
+  }
+}
+
+export interface DumpParams {
+  exportId: string
+  connectionId: string
+  database: string
+  tables: string[] | null
+  structure: boolean
+  data: boolean
+  drop: boolean
+  rowsPerInsert: number
+  compress: boolean
+  fileName: string
+}
+
+export function validateDumpParams(input: unknown): DumpParams {
+  if (!isRecord(input)) invalid('Dump request must be an object')
+  const { exportId, connectionId, database, fileName } = input
+  for (const [name, value] of Object.entries({ exportId, connectionId, database, fileName })) {
+    if (typeof value !== 'string' || value.length === 0) invalid(`${name} is required`)
+  }
+  if ((fileName as string).length > 255) invalid('That file name is too long')
+  let tables: string[] | null = null
+  if (input.tables !== null && input.tables !== undefined) {
+    if (
+      !Array.isArray(input.tables) ||
+      input.tables.length > 100_000 ||
+      input.tables.some((t) => typeof t !== 'string' || t.length === 0 || t.length > 256)
+    ) {
+      invalid('tables must be a list of names')
+    }
+    tables = input.tables as string[]
+  }
+  const structure = input.structure !== false
+  const data = input.data !== false
+  if (!structure && !data) invalid('Choose the structure, the data, or both')
+  const rows = input.rowsPerInsert
+  return {
+    exportId: exportId as string,
+    connectionId: connectionId as string,
+    database: database as string,
+    tables,
+    structure,
+    data,
+    drop: input.drop === true,
+    rowsPerInsert:
+      typeof rows === 'number' && Number.isFinite(rows)
+        ? Math.min(MAX_ROWS_PER_INSERT, Math.max(1, Math.floor(rows)))
+        : DEFAULT_EXPORT_OPTIONS.rowsPerInsert,
+    compress: input.compress === true,
     fileName: fileName as string,
   }
 }

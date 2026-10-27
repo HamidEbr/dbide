@@ -5,6 +5,7 @@ import { revealScripts } from '@/features/sql/library'
 import { useHistory } from '@/state/history'
 import { useData } from '@/state/data'
 import { notify } from '@/state/notices'
+import { SnippetsSection } from './SnippetsSection'
 
 const THEMES: { value: ThemeSetting; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -98,6 +99,8 @@ export function SettingsView() {
           />
         </div>
       </section>
+
+      <SnippetsSection />
 
       <section className="form-section">
         <h2>Scripts and history</h2>

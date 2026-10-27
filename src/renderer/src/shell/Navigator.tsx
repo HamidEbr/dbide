@@ -9,7 +9,9 @@ import {
   Database,
   Download,
   Eye,
+  Import,
   FileCode,
+  FileUp,
   Folder,
   Hash,
   Inbox,
@@ -38,6 +40,7 @@ import { prefixGlob } from '@shared/redis/types'
 import { DENSITY_ROW_HEIGHT } from '@shared/settings'
 import { EngineIcon, EnvDot, IconButton, Kbd } from '@/components/ui'
 import { openTableExport } from '@/features/sql/export/open'
+import { useDialogs } from '@/state/dialogs'
 import { createScript, findAllMongo, selectAllSql } from '@/features/sql/scripts'
 import { useData } from '@/state/data'
 import { useTree } from '@/state/tree'
@@ -252,6 +255,12 @@ export function Navigator() {
     <div className="side-view-inner" role="group" aria-label="Connections">
       <div className="pane-header">
         <h2>Connections</h2>
+        <IconButton
+          label="Import connections from another tool"
+          onClick={() => useDialogs.getState().openDbeaverImport()}
+        >
+          <Import size={14} />
+        </IconButton>
         <IconButton label="New connection" onClick={() => workbench.newConnection()}>
           <Plus size={14} />
         </IconButton>
@@ -316,11 +325,34 @@ export function Navigator() {
                 onConsole={() => openConsole(row)}
                 canExport={
                   row.type === 'node' &&
-                  (row.node.kind === 'table' || row.node.kind === 'view') &&
+                  (row.node.kind === 'table' ||
+                    row.node.kind === 'view' ||
+                    row.node.kind === 'database') &&
                   connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
                 }
+                canImport={
+                  row.type === 'node' &&
+                  (row.node.kind === 'table' || row.node.kind === 'database') &&
+                  connections.find((c) => c.id === row.connectionId)?.engine === 'mysql'
+                }
+                onImport={() => {
+                  if (row.type !== 'node') return
+                  const table = row.node.kind === 'table'
+                  const database = table ? row.node.scope : row.node.label
+                  if (!database) return
+                  useDialogs.getState().openImportData({
+                    connectionId: row.connectionId,
+                    database,
+                    ...(table ? { table: row.node.label } : {}),
+                  })
+                }}
                 onExport={() => {
-                  if (row.type === 'node' && row.node.scope) {
+                  if (row.type === 'node' && row.node.kind === 'database') {
+                    useDialogs.getState().openDump({
+                      connectionId: row.connectionId,
+                      database: row.node.label,
+                    })
+                  } else if (row.type === 'node' && row.node.scope) {
                     void openTableExport(row.connectionId, row.node.scope, row.node.label)
                   }
                 }}
@@ -345,6 +377,9 @@ interface RowProps {
   /** A table or view of a SQL server, which can be written to a file from here. */
   canExport: boolean
   onExport: () => void
+  /** A table or database of a SQL server, which a file can be imported into. */
+  canImport: boolean
+  onImport: () => void
 }
 
 function TreeRowView({
@@ -358,6 +393,8 @@ function TreeRowView({
   onConsole,
   canExport,
   onExport,
+  canImport,
+  onImport,
 }: RowProps) {
   const indent = 8 + row.depth * INDENT
 
@@ -539,6 +576,17 @@ function TreeRowView({
               }}
             >
               <Download size={12} />
+            </IconButton>
+          ) : null}
+          {canImport ? (
+            <IconButton
+              label={`Import a file into ${node.label}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onImport()
+              }}
+            >
+              <FileUp size={12} />
             </IconButton>
           ) : null}
           <IconButton

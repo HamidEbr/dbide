@@ -1,8 +1,9 @@
 import { Send, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { MessageProperties, PublishRequest } from '@shared/rabbitmq'
 import { Button, Field, IconButton, Segmented } from '@/components/ui'
 import { coreLink } from '@/ipc/link'
+import { useServerCall } from '@/lib/useServerCall'
 import { notify } from '@/state/notices'
 import { exchangeLabel } from './format'
 import { changeData } from '@/state/writes'
@@ -50,6 +51,35 @@ export function PublishDialog({
     type: '',
     appId: '',
   })
+  // Names to suggest: the exchanges, and then the routing keys that exchange is bound with (or the queues, for the
+  // default exchange). The form works without them, so a failed read just leaves the lists empty.
+  const listing = useServerCall((signal) =>
+    coreLink.call('broker.listing', { connectionId, vhost }, { signal }),
+  )
+  const [boundKeys, setBoundKeys] = useState<string[]>([])
+  const exchangeNames = (listing.data?.exchanges ?? [])
+    .filter((e) => e.name !== '')
+    .map((e) => e.name)
+  const known = exchangeNames.includes(form.exchange)
+  useEffect(() => {
+    if (!known) return
+    const controller = new AbortController()
+    coreLink
+      .call(
+        'broker.exchange',
+        { connectionId, vhost, name: form.exchange },
+        { signal: controller.signal },
+      )
+      .then((detail) =>
+        setBoundKeys([
+          ...new Set(detail.bindingsFrom.map((b) => b.routingKey).filter((k) => k !== '')),
+        ]),
+      )
+      .catch(() => setBoundKeys([]))
+    return () => controller.abort()
+  }, [known, form.exchange, connectionId, vhost])
+  const routingKeys =
+    form.exchange === '' ? (listing.data?.queues ?? []).map((q) => q.name) : known ? boundKeys : []
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const set = (patch: Partial<typeof form>): void => {
@@ -154,6 +184,7 @@ export function PublishDialog({
                 id={id}
                 className="mono"
                 value={form.exchange}
+                list="publish-exchanges"
                 placeholder="(default)"
                 onChange={(e) => set({ exchange: e.target.value })}
                 spellCheck={false}
@@ -166,6 +197,7 @@ export function PublishDialog({
                 id={id}
                 className="mono"
                 value={form.routingKey}
+                list="publish-routing-keys"
                 onChange={(e) => set({ routingKey: e.target.value })}
                 spellCheck={false}
               />
@@ -208,6 +240,16 @@ export function PublishDialog({
               />
             )}
           </Field>
+          <datalist id="publish-exchanges">
+            {exchangeNames.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          <datalist id="publish-routing-keys">
+            {routingKeys.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
           <datalist id="content-types">
             {CONTENT_TYPES.map((type) => (
               <option key={type} value={type} />

@@ -140,6 +140,34 @@ export function hintFor(line: string): Hint | null {
   return { name: info.name, words, active }
 }
 
+/** The words of a command's syntax that stand for a key. */
+const KEY_WORDS = /^\[?(key|newkey|source|destination|srckey|dstkey|key1|key2)\b/i
+
+/**
+ * The key being typed as an argument, when the cursor is on one: where it starts, what is typed of it, and the
+ * quote it was opened with. Null for a command name, another kind of argument, or a key with escapes in it.
+ */
+export function keyArgument(
+  line: string,
+): { from: number; prefix: string; quote: string | null } | null {
+  const match = /(?:^|\s)(["']?)([^\s"'\\]*)$/.exec(line)
+  if (!match) return null
+  // An open quote can't be read as a command yet, so the hint is asked about the line with it closed.
+  const hint = hintFor(match[1] ? line + match[1] : line)
+  if (!hint || hint.active < 0 || !KEY_WORDS.test(hint.words[hint.active]!)) return null
+  const quote = match[1] || null
+  return {
+    from: match.index + match[0].length - match[1]!.length - match[2]!.length,
+    prefix: match[2]!,
+    quote,
+  }
+}
+
+/** A key as it is typed in a command: bare when it can be, in quotes when it has a space, a quote or a backslash. */
+export function keyText(key: string, quoted = false): string {
+  return !quoted && /^[^\s"'\\]+$/.test(key) ? key : `"${key.replace(/[\\"]/g, (c) => `\\${c}`)}"`
+}
+
 const STORAGE_KEY = 'dbide.redis.history'
 const HISTORY_LIMIT = 500
 

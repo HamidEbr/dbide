@@ -2,6 +2,7 @@ import { Eraser, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { classifyRedis } from '@shared/redis/command'
 import { isReadSafe } from '@shared/redis/command'
+import { prefixGlob } from '@shared/redis/types'
 import { Button, EnvBadge } from '@/components/ui'
 import { Chip, LockButton } from '@/components/panel'
 import { coreLink } from '@/ipc/link'
@@ -9,7 +10,7 @@ import { messageOf } from '@/lib/format'
 import { useData } from '@/state/data'
 import { changeData, isWritable, useWritable } from '@/state/writes'
 import type { Tab } from '@/state/workbench'
-import { CommandHistory, completions, formatReply, hintFor } from './console'
+import { CommandHistory, completions, formatReply, hintFor, keyArgument, keyText } from './console'
 
 interface Entry {
   id: number
@@ -109,7 +110,46 @@ export function ConsoleView({ tab, active }: { tab: Tab; active: boolean }) {
   const push = (entry: Omit<Entry, 'id'>): void =>
     setEntries((all) => [...all.slice(-(MAX_ENTRIES - 1)), { ...entry, id: nextEntry++ }])
 
-  const suggestions = completions(input)
+  // Key names, asked of the server a moment after typing stops, while a key is being typed.
+  const [keyNames, setKeyNames] = useState<{ line: string; keys: string[] }>({ line: '', keys: [] })
+  useEffect(() => {
+    const argument = keyArgument(input)
+    if (argument === null || db === null || running) return
+    const ctl = new AbortController()
+    const timer = setTimeout(() => {
+      coreLink
+        .call(
+          'redis.scan',
+          {
+            connectionId,
+            db,
+            pattern: prefixGlob(argument.prefix),
+            cursor: null,
+            limit: 8,
+          },
+          { signal: ctl.signal },
+        )
+        .then((page) => setKeyNames({ line: input, keys: page.keys.map((k) => k.key) }))
+        .catch(() => undefined)
+    }, 200)
+    return () => {
+      clearTimeout(timer)
+      ctl.abort()
+    }
+  }, [input, db, running, connectionId])
+
+  const commandSuggestions = completions(input)
+  const keyArg = keyArgument(input)
+  const suggestions =
+    commandSuggestions.items.length === 0 && keyArg !== null && keyNames.line === input
+      ? {
+          from: keyArg.from,
+          items: keyNames.keys.map((key) => ({
+            text: keyText(key, keyArg.quote !== null),
+            syntax: 'key',
+          })),
+        }
+      : commandSuggestions
   const open = !dismissed && !running && suggestions.items.length > 0
   const hint = hintFor(input)
 

@@ -1,3 +1,4 @@
+import { createCipheriv } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
@@ -1119,6 +1120,97 @@ describe('export', () => {
     expect(readFileSync(path).subarray(0, 2).toString()).toBe('PK')
   })
 
+  it('writes a database as a SQL file, for the tables asked for', async () => {
+    const path = join(out, 'shop.sql')
+    const driver = fakeDriver('mysql', () =>
+      Promise.resolve(
+        fakeSession({
+          schemaDetail: () =>
+            Promise.resolve({
+              database: 'shop',
+              tables: [
+                { name: 'a', view: false, comment: '', columns: [] },
+                { name: 'b', view: false, comment: '', columns: [] },
+              ],
+              foreignKeys: [],
+            }),
+          async *execute(request) {
+            if (request.text.startsWith('SHOW CREATE')) {
+              yield { kind: 'columns', columns: [{ name: 'a', type: 'text' }] } as ResultBatch
+              yield { kind: 'rows', rows: [['t', 'CREATE TABLE x (n int)']] } as ResultBatch
+            } else {
+              yield { kind: 'columns', columns: [{ name: 'n', type: 'int' }] } as ResultBatch
+              yield { kind: 'rows', rows: [[1]] } as ResultBatch
+            }
+          },
+        }),
+      ),
+    )
+    const t = setup({
+      drivers: new DriverRegistry([driver]),
+      files: createFakeFiles({ savePath: path }),
+    })
+    await save({ ...t, opened: [] })
+    const dump = {
+      exportId: 'd1',
+      connectionId: 'm1',
+      database: 'shop',
+      tables: ['a'],
+      structure: true,
+      data: true,
+      drop: true,
+      rowsPerInsert: 100,
+      compress: false,
+      fileName: 'shop.sql',
+    }
+    const result = await t.handlers['export.dump'](dump, ctx)
+    expect(result).toMatchObject({ status: 'saved', path, rows: 1, tables: 1 })
+    const text = readFileSync(path, 'utf8')
+    expect(text).toContain('DROP TABLE IF EXISTS `a`;')
+    expect(text).toContain('INSERT INTO `a` (`n`) VALUES (1);')
+    expect(text).not.toContain('`b`')
+    await expect(
+      t.handlers['export.dump']({ ...dump, tables: ['gone'] }, ctx),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(
+      t.handlers['export.dump']({ ...dump, structure: false, data: false }, ctx),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('asks the server for a plan on a connection that cannot write', async () => {
+    const seen: string[] = []
+    const driver = fakeDriver('mysql', () =>
+      Promise.resolve(
+        fakeSession({
+          async *execute(request): AsyncGenerator<ResultBatch> {
+            seen.push(request.text)
+            yield { kind: 'columns', columns: [{ name: 'EXPLAIN', type: 'json' }] }
+            yield { kind: 'rows', rows: [['{"query_block":{}}']] }
+          },
+        }),
+      ),
+    )
+    const t = setup({
+      drivers: new DriverRegistry([driver]),
+      files: createFakeFiles({ savePath: null }),
+    })
+    await save({ ...t, opened: [] })
+    const ask = (sql: string, analyze = false) =>
+      t.handlers['query.explain']({ connectionId: 'm1', database: 'shop', sql, analyze }, ctx)
+    expect(await ask('SELECT 1')).toEqual({ json: '{"query_block":{}}', text: null })
+    expect(seen).toEqual(['EXPLAIN FORMAT=JSON SELECT 1'])
+    expect(await ask('SELECT 1', true)).toMatchObject({ json: null })
+    expect(seen[1]).toBe('EXPLAIN ANALYZE SELECT 1')
+    // A change can be planned but never run to be timed; a second statement or an EXPLAIN is refused.
+    await expect(ask('DELETE FROM t WHERE id = 1', true)).rejects.toMatchObject({
+      code: 'NOT_A_QUERY',
+    })
+    await expect(ask('DROP TABLE t')).rejects.toMatchObject({ code: 'NOT_A_QUERY' })
+    await expect(ask('SELECT 1; SELECT 2')).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    await expect(ask('EXPLAIN SELECT 1')).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect((await ask('DELETE FROM t WHERE id = 1')).json).not.toBeNull()
+  })
+
   it('does nothing when the save dialog is dismissed', async () => {
     const t = exportSetup(null)
     await save(t)
@@ -1431,5 +1523,188 @@ describe('a server that can not enforce read-only', () => {
     await t.handlers['connections.save']({ config: { ...prod, name: 'Legacy 2' } }, ctx)
     await t.handlers['tree.children']({ connectionId: 'm1', parent: null }, t.emitting)
     expect(t.notices).toHaveLength(2)
+  })
+})
+
+describe('dbeaver import', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dbide-dbv-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  const sources = JSON.stringify({
+    connections: {
+      m: {
+        provider: 'mysql',
+        driver: 'mysql8',
+        name: 'Shop',
+        'save-password': true,
+        configuration: { host: 'db', port: '3306', type: 'prod' },
+      },
+      r: { provider: 'redis', driver: 'redis', name: 'Cache', configuration: {} },
+    },
+  })
+  const encrypted = () => {
+    const iv = Buffer.alloc(16, 3)
+    const cipher = createCipheriv(
+      'aes-128-cbc',
+      Buffer.from('babb4a9f774ab853c96c2d653dfde98b', 'hex'),
+      iv,
+    )
+    return Buffer.concat([
+      iv,
+      cipher.update(JSON.stringify({ m: { '#connection': { user: 'root', password: 'secret' } } })),
+      cipher.final(),
+    ])
+  }
+
+  it('lists the connections, then imports only the chosen ones, with passwords when asked', async () => {
+    const file = join(dir, 'data-sources.json')
+    writeFileSync(file, sources)
+    writeFileSync(join(dir, 'credentials-config.json'), encrypted())
+    const t = setup({ files: createFakeFiles({ openPaths: [file] }) })
+    const scan = await t.handlers['connectionImport.scan']({ source: 'dbeaver', choose: true }, ctx)
+    expect(scan.path).toBe(file)
+    expect(scan.hasCredentials).toBe(true)
+    expect(scan.connections.find((c) => c.sourceId === 'm')).toMatchObject({
+      username: 'root',
+      environment: 'prod',
+    })
+    // The window is never given a password.
+    expect(JSON.stringify(scan)).not.toContain('secret')
+
+    const done = await t.handlers['connectionImport.run'](
+      { source: 'dbeaver', path: file, ids: ['m'], passwords: true },
+      ctx,
+    )
+    expect(done.imported).toHaveLength(1)
+    const saved = (await t.handlers['connections.list'](undefined, ctx))[0]!
+    expect(saved).toMatchObject({ name: 'Shop', engine: 'mysql', environment: 'prod' })
+    expect(await t.secrets.get(secretKey(saved.id, 'password'))).toBe('secret')
+    expect((await t.handlers['connections.list'](undefined, ctx)).length).toBe(1)
+
+    // Importing again does not overwrite: the new one gets its own name, and no password without the box ticked.
+    await t.handlers['connectionImport.run'](
+      { source: 'dbeaver', path: file, ids: ['m'], passwords: false },
+      ctx,
+    )
+    const all = await t.handlers['connections.list'](undefined, ctx)
+    expect(all.map((c) => c.name).sort()).toEqual(['Shop', 'Shop (2)'])
+    const second = all.find((c) => c.name === 'Shop (2)')!
+    expect(await t.secrets.get(secretKey(second.id, 'password'))).toBeFalsy()
+  })
+
+  it('only imports from a file it has read', async () => {
+    const t = setup()
+    await expect(
+      t.handlers['connectionImport.run'](
+        { source: 'dbeaver', path: join(dir, 'x.json'), ids: [], passwords: false },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('finds nothing when the user cancels', async () => {
+    const t = setup()
+    expect(
+      await t.handlers['connectionImport.scan']({ source: 'dbeaver', choose: true }, ctx),
+    ).toMatchObject({
+      path: null,
+      connections: [],
+    })
+  })
+})
+
+describe('data import', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dbide-imp-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  function importSetup(file: string) {
+    const seen: { sql: string; readOnly: boolean | undefined }[] = []
+    const driver = fakeDriver('mysql', (context) =>
+      Promise.resolve(
+        fakeSession({
+          async *execute(request): AsyncGenerator<ResultBatch> {
+            seen.push({ sql: request.text, readOnly: context.readOnly })
+            yield { kind: 'ok', affectedRows: 0, insertId: null, message: '', warnings: 0 }
+          },
+        }),
+      ),
+    )
+    const t = setup({
+      drivers: new DriverRegistry([driver]),
+      files: createFakeFiles({ openPaths: [file] }),
+    })
+    return { ...t, seen }
+  }
+  const run = (path: string, overrides = {}) => ({
+    importId: 'i1',
+    connectionId: 'm1',
+    database: 'shop',
+    path,
+    source: { format: 'csv' as const, delimiter: ',' as const, header: true },
+    table: 'items',
+    create: null,
+    mapping: [{ source: 0, target: 'id' }],
+    emptyAsNull: true,
+    skipDuplicates: false,
+    confirmed: false,
+    ...overrides,
+  })
+
+  it('previews a chosen file, then writes it on a connection that can write', async () => {
+    const file = join(dir, 'items.csv')
+    writeFileSync(file, 'id,name\n1,a\n2,b\n')
+    const t = importSetup(file)
+    await t.handlers['connections.save'](
+      { config: { ...newConnectionDraft('mysql', 'm1'), name: 'Shop' } },
+      ctx,
+    )
+    expect(await t.handlers['import.choose'](undefined, ctx)).toMatchObject({
+      path: file,
+      name: 'items.csv',
+    })
+    const preview = await t.handlers['import.preview'](
+      { path: file, source: run(file).source },
+      ctx,
+    )
+    expect(preview).toMatchObject({
+      columns: ['id', 'name'],
+      types: ['BIGINT', 'VARCHAR(50)'],
+      more: false,
+    })
+    const result = await t.handlers['import.run'](run(file), ctx)
+    expect(result.rows).toBe(2)
+    expect(t.seen.every((s) => s.readOnly === false)).toBe(true)
+    expect(t.seen.map((s) => s.sql)).toContain(
+      "INSERT INTO `shop`.`items` (`id`) VALUES\n('1'),\n('2')",
+    )
+  })
+
+  it('refuses a file that was not chosen, and a production connection that was not confirmed', async () => {
+    const file = join(dir, 'items.csv')
+    writeFileSync(file, 'id\n1\n')
+    const t = importSetup(file)
+    await t.handlers['connections.save'](
+      { config: { ...newConnectionDraft('mysql', 'm1'), name: 'Shop', environment: 'prod' } },
+      ctx,
+    )
+    await expect(t.handlers['import.run'](run(file), ctx)).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    })
+    await t.handlers['import.choose'](undefined, ctx)
+    await expect(t.handlers['import.run'](run(file), ctx)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await expect(
+      t.handlers['import.run'](run(file, { confirmed: true }), ctx),
+    ).resolves.toMatchObject({ rows: 1 })
+    await expect(t.handlers['import.run'](run(file, { mapping: [] }), ctx)).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    })
   })
 })

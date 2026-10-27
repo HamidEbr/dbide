@@ -3211,3 +3211,119 @@ button.schema-status {
   border-radius: var(--radius);
   overflow: auto;
 }
+
+.snippet-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr auto;
+  gap: 6px;
+  margin: 10px 0;
+}
+.snippet-row textarea {
+  grid-column: 1 / -1;
+  resize: vertical;
+}
+.snippet-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dialog-explain {
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+}
+.explain-summary {
+  display: flex;
+  gap: 16px;
+  margin: 10px 0 4px;
+}
+.explain-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.explain-step {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+}
+.explain-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.explain-chip {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+}
+.explain-bad {
+  color: #d1453b;
+}
+.explain-warn {
+  color: #c08a14;
+}
+.explain-good {
+  color: #2f9e62;
+}
+.explain-bar {
+  height: 4px;
+  margin-top: 4px;
+  background: rgba(128, 128, 128, 0.18);
+  border-radius: 2px;
+}
+.explain-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+}
+.explain-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.explain-cond {
+  font-size: 12px;
+  margin-top: 2px;
+  word-break: break-all;
+}
+.explain-text {
+  max-height: 50vh;
+  overflow: auto;
+  white-space: pre;
+}
+
+.import-preview {
+  max-height: 160px;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 4px;
+}
+.import-preview table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.import-preview th,
+.import-preview td {
+  padding: 2px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.import-map {
+  max-height: 32vh;
+  overflow: auto;
+  margin: 8px 0;
+}
+.import-map-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(7rem, 10rem);
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}

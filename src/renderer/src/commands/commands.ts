@@ -71,6 +71,12 @@ export function registerBuiltinCommands(): void {
       run: () => workbench.newConnection(),
     },
     {
+      id: 'connection.importDbeaver',
+      title: 'Import connections from another tool…',
+      category: 'Connection',
+      run: () => useDialogs.getState().openDbeaverImport(),
+    },
+    {
       id: 'script.new',
       title: 'New script',
       category: 'SQL',
