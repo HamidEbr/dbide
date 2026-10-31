@@ -443,6 +443,18 @@ const PAGE_HELPERS = `
     mod: () => (window.dbide.platform === 'darwin' ? { metaKey: true } : { ctrlKey: true }),
     key: (code, init = {}) => window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true, cancelable: true, ...init })),
     click: (el) => el && el.click(),
+    /** A row under one connection, so a name that two connections share (shop) is the right one. */
+    under: (connection, text) => {
+      const rows = [...document.querySelectorAll('.tree-row')]
+      const start = rows.findIndex((r) => r.getAttribute('aria-level') === '1' && r.textContent.includes(connection))
+      if (start === -1) return undefined
+      for (const r of rows.slice(start + 1)) {
+        if (r.getAttribute('aria-level') === '1') break
+        const label = r.querySelector('.tree-label')
+        if (label && label.textContent === text) return r
+      }
+      return undefined
+    },
     byLabel: (text) => { const el = [...document.querySelectorAll('.tree-label')].find((e) => e.textContent === text); return el && el.closest('.tree-row') },
     mouse: (el, init = {}) => el && el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, ...init })),
     vis: (selector) => document.querySelector('.workbench-sql:not([hidden]) ' + selector),
@@ -544,12 +556,12 @@ async function captureScreenshots(window: BrowserWindow, dir: string, port: numb
 
   // SQL workbench against the demo engine
   await run(`window.__h.click(window.__h.byLabel('Orders DB')); await window.__h.wait(500)`)
-  await run(`window.__h.click(window.__h.byLabel('shop')); await window.__h.wait(400)`)
-  await run(`window.__h.click(window.__h.byLabel('Tables')); await window.__h.wait(400)`)
+  await run(`window.__h.click(window.__h.under('Orders DB', 'shop')); await window.__h.wait(400)`)
+  await run(`window.__h.click(window.__h.under('Orders DB', 'Tables')); await window.__h.wait(400)`)
   await shot('10-tree')
 
   await run(
-    `window.__h.byLabel('orders').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await window.__h.wait(1200)`,
+    `window.__h.under('Orders DB', 'orders').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await window.__h.wait(1200)`,
   )
   await shot('11-sql-results')
 

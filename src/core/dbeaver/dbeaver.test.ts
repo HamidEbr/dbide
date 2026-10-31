@@ -81,10 +81,12 @@ describe('readDbeaver', () => {
   })
 
   it('knows where each system keeps it', () => {
-    expect(defaultDbeaverDir('darwin', {}, '/Users/a')).toBe(
+    // On Windows `join` writes backslashes; the shape of the path is what is checked.
+    const slashes = (path: string): string => path.replace(/\\/g, '/')
+    expect(slashes(defaultDbeaverDir('darwin', {}, '/Users/a'))).toBe(
       '/Users/a/Library/DBeaverData/workspace6/General/.dbeaver',
     )
-    expect(defaultDbeaverDir('linux', {}, '/home/a')).toContain('.local/share/DBeaverData')
+    expect(slashes(defaultDbeaverDir('linux', {}, '/home/a'))).toContain('.local/share/DBeaverData')
     expect(
       defaultDbeaverDir('win32', { APPDATA: 'C:\\Users\\a\\AppData\\Roaming' }, 'C:\\Users\\a'),
     ).toContain('DBeaverData')
@@ -126,7 +128,7 @@ describe('readConnections', () => {
       database: '2',
     })
     expect(read!.logins['url-0']!.connection!.password).toBe('pw')
-    expect(defaultSourcePath('workbench', 'darwin', {}, '/Users/a')).toBe(
+    expect(defaultSourcePath('workbench', 'darwin', {}, '/Users/a')?.replace(/\\/g, '/')).toBe(
       '/Users/a/Library/Application Support/MySQL/Workbench/connections.xml',
     )
     expect(defaultSourcePath('navicat')).toBeNull()
